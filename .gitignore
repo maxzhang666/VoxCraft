@@ -1,0 +1,16 @@
+# 设计文档（Spec / Plan / ADR）仅作本地沉淀，不入版本控制
+docs/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
