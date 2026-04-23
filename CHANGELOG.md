@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Docs
+- **ADR-013 Accepted**（[process-pool-cancel](docs/superpowers/specs/voxcraft/decisions/ADR-013-process-pool-cancel.md)）：Worker 子进程调度 + Running 任务真取消的完整设计固化。否决"伪取消"方案，选 `multiprocessing.Process` + `SIGTERM` 路径；接受 LRU 冷启动代价换取真中断能力。**实施留给下一会话窗口**（代码改动涉及 scheduler/business/jobs/main 多模块 + 新 worker 入口，不在当前会话塞入）。
+
+### Added（接口前置）
+- `Scheduler.cancel(job_id) -> bool` 接口，in-process 实现固定返回 False（明示"不能保证已停"）；为 ADR-013 的 `PoolScheduler` 实施留接口锚点
+- `Settings.scheduler_backend: Literal["inprocess","pool"]`（默认 `inprocess`），预留生产切换 pool 的配置项
+
 ## [v0.1.4] — 2026-04-23
 
 ### Added — OpenAI 兼容 API 层（[ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md)）

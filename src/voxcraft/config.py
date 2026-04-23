@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +22,8 @@ class Settings(BaseSettings):
     output_dir: Path = Path("./data/outputs")
     models_dir: Path = Path("./models")
     preferred_source: str = "hf"  # hf / ms — 国内用户建议改 ms
+    # ADR-013 预留扩展点：inprocess=当前单进程调度；pool=worker 子进程，支持真取消
+    scheduler_backend: Literal["inprocess", "pool"] = "inprocess"
 
 
 @lru_cache(maxsize=1)
