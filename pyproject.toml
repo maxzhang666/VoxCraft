@@ -27,6 +27,7 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
     "httpx>=0.28",
 ]
 
@@ -41,3 +42,23 @@ packages = ["src/voxcraft"]
 testpaths = ["tests"]
 markers = ["slow: marks tests that load real models (deselect with -m 'not slow')"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src/voxcraft"]
+branch = true
+omit = [
+    "*/providers/mock.py",       # 仅测试用 Mock 实现
+    "*/db/migrate.py",           # Alembic 驱动脚手架
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = false
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",  # Protocol / abstract stub
+]

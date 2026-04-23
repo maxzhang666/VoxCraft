@@ -1,23 +1,28 @@
 import { Card, Col, Descriptions, Row, Space, Typography } from "@douyinfe/semi-ui";
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { listJobs } from "@/api/jobs";
 import { GpuGauge } from "@/components/GpuGauge";
 import { StatusTag } from "@/components/StatusTag";
+import { useSse } from "@/hooks/useSse";
 import { useSystem } from "@/stores/SystemContext";
-import type { Job } from "@/types/api";
+import type { Job, JobKind } from "@/types/api";
 
 const { Title, Text } = Typography;
 
-const KIND_LABEL: Record<string, string> = {
-  asr: "🎧 语音转文字",
-  tts: "🔊 语音合成",
-  clone: "🎭 语音克隆",
-  separate: "🎸 人声分离",
+const KIND_META: Record<JobKind, { label: string; icon: string; path: string }> = {
+  asr: { label: "语音转文字", icon: "🎧", path: "/asr" },
+  tts: { label: "语音合成", icon: "🔊", path: "/tts" },
+  clone: { label: "语音克隆", icon: "🎭", path: "/cloning" },
+  separate: { label: "人声分离", icon: "🎸", path: "/separator" },
 };
+
+const KINDS: JobKind[] = ["asr", "tts", "clone", "separate"];
 
 export function Dashboard() {
   const sys = useSystem();
+  const navigate = useNavigate();
   const [recent, setRecent] = useState<Job[]>([]);
 
   const refresh = useCallback(async () => {
@@ -31,9 +36,13 @@ export function Dashboard() {
 
   useEffect(() => {
     refresh();
+    // 10s 兜底轮询；SSE 正常时不会触发冗余
     const id = setInterval(refresh, 10000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // SSE 驱动即时更新：任何 job 状态变化都刷新列表
+  useSse(["job_status_changed"], refresh);
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -41,6 +50,33 @@ export function Dashboard() {
         🌿 首页
       </Title>
 
+      {/* 能力快捷入口 */}
+      <Row gutter={16} style={{ marginBottom: "var(--vc-spacing-lg)" }}>
+        {KINDS.map((k) => {
+          const m = KIND_META[k];
+          return (
+            <Col span={6} key={k}>
+              <div
+                onClick={() => navigate(m.path)}
+                style={{ cursor: "pointer" }}
+              >
+                <Card
+                  shadows="hover"
+                  bodyStyle={{
+                    padding: "var(--vc-spacing-lg)",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 32, lineHeight: 1 }}>{m.icon}</div>
+                  <div style={{ marginTop: 8, fontWeight: 500 }}>{m.label}</div>
+                </Card>
+              </div>
+            </Col>
+          );
+        })}
+      </Row>
+
+      {/* 服务状态 / GPU */}
       <Row gutter={16}>
         <Col span={12}>
           <Card title="服务状态" style={{ height: "100%" }}>
@@ -74,35 +110,40 @@ export function Dashboard() {
         </Col>
       </Row>
 
-      <Card
-        title="最近 5 个任务"
-        style={{ marginTop: "var(--vc-spacing-lg)" }}
-      >
+      {/* 最近 5 个任务（点击跳转对应能力页） */}
+      <Card title="最近 5 个任务" style={{ marginTop: "var(--vc-spacing-lg)" }}>
         {recent.length === 0 ? (
           <Text type="tertiary">暂无任务记录</Text>
         ) : (
-          recent.map((j) => (
-            <div
-              key={j.id}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                padding: "var(--vc-spacing-sm) 0",
-                borderBottom: "1px solid var(--vc-color-border)",
-              }}
-            >
-              <Space>
-                <StatusTag status={j.status} />
-                <Text>{KIND_LABEL[j.kind] ?? j.kind}</Text>
+          recent.map((j) => {
+            const m = KIND_META[j.kind];
+            return (
+              <div
+                key={j.id}
+                onClick={() => navigate(m.path)}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  padding: "var(--vc-spacing-sm) 0",
+                  borderBottom: "1px solid var(--vc-color-border)",
+                  cursor: "pointer",
+                }}
+              >
+                <Space>
+                  <StatusTag status={j.status} />
+                  <Text>
+                    {m.icon} {m.label}
+                  </Text>
+                  <Text type="tertiary" size="small">
+                    {j.id.slice(0, 8)}
+                  </Text>
+                </Space>
                 <Text type="tertiary" size="small">
-                  {j.id.slice(0, 8)}
+                  {new Date(j.created_at).toLocaleString("zh-CN")}
                 </Text>
-              </Space>
-              <Text type="tertiary" size="small">
-                {new Date(j.created_at).toLocaleString("zh-CN")}
-              </Text>
-            </div>
-          ))
+              </div>
+            );
+          })
         )}
       </Card>
     </div>

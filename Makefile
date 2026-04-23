@@ -1,4 +1,4 @@
-.PHONY: setup setup-frontend dev dev-frontend dev-all test test-e2e build up down clean
+.PHONY: setup setup-frontend dev dev-frontend dev-all test test-e2e coverage build up down clean
 
 # 只同步后端依赖（服务器场景）
 setup:
@@ -28,6 +28,10 @@ test:
 # 含真模型的 E2E 测试
 test-e2e:
 	uv run pytest -v -m slow
+
+# 覆盖率报告（门槛 80%；HTML 输出到 htmlcov/）
+coverage:
+	uv run pytest --cov --cov-report=term-missing --cov-report=html --cov-fail-under=80 -m "not slow"
 
 # Docker 构建
 build:

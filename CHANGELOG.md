@@ -7,9 +7,18 @@ All notable changes to this project will be documented in this file.
 ### Docs
 - **ADR-013 Accepted**（[process-pool-cancel](docs/superpowers/specs/voxcraft/decisions/ADR-013-process-pool-cancel.md)）：Worker 子进程调度 + Running 任务真取消的完整设计固化。否决"伪取消"方案，选 `multiprocessing.Process` + `SIGTERM` 路径；接受 LRU 冷启动代价换取真中断能力。**实施留给下一会话窗口**（代码改动涉及 scheduler/business/jobs/main 多模块 + 新 worker 入口，不在当前会话塞入）。
 
-### Added（接口前置）
-- `Scheduler.cancel(job_id) -> bool` 接口，in-process 实现固定返回 False（明示"不能保证已停"）；为 ADR-013 的 `PoolScheduler` 实施留接口锚点
+### Added
+- `Scheduler.cancel(job_id) -> bool` 接口（ADR-013 前置）；in-process 实现固定返回 False
 - `Settings.scheduler_backend: Literal["inprocess","pool"]`（默认 `inprocess`），预留生产切换 pool 的配置项
+- **pytest-cov 接入 + 80% 覆盖率门槛**：`make coverage` 一键跑；HTML 输出 `htmlcov/`；dev 依赖加 `pytest-cov>=6.0`。当前基线 **85.0%**（TOTAL）
+- **首页快捷入口**：Dashboard 四个能力大卡片（🎧/🔊/🎭/🎸）点击即跳对应能力页
+- **首页最近任务 SSE 实时刷新**：订阅 `job_status_changed`，状态变化即刻反映；10s 兜底轮询保留
+
+### Removed（死代码）
+- `api/schemas/asr.py`（`AsrResponse` / `AsrSegmentSchema`）——v0.1.3 异步化后无引用
+- `api/schemas/separate.py`（`SeparateResponse`）——同上
+- `api/schemas/common.py`（`ErrorResponse` / `ErrorDetail`）——错误处理走 `error_handlers.py` 手写 dict，此 schema 从未引用
+- `pages/Placeholder.tsx`——无引用
 
 ## [v0.1.4] — 2026-04-23
 
