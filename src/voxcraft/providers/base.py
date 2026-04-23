@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal
+from typing import Any, Callable, ClassVar, Literal
 
 
 ConfigFieldType = Literal["path", "enum", "str", "int", "bool"]
@@ -101,8 +101,13 @@ class AsrProvider(Provider):
 
     @abstractmethod
     def transcribe(
-        self, audio_path: str, language: str | None = None
-    ) -> AsrResult: ...
+        self,
+        audio_path: str,
+        language: str | None = None,
+        progress_cb: "Callable[[float], None] | None" = None,
+    ) -> AsrResult:
+        """`progress_cb(p)` 接受 0.0~1.0 的浮点数；实现方自行决定汇报节奏。"""
+        ...
 
 
 class TtsProvider(Provider):

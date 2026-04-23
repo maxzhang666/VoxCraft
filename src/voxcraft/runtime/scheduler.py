@@ -37,12 +37,32 @@ class InProcessScheduler:
         )
 
     async def submit(self, req: JobRequest) -> JobResult:
-        """新接口（ADR-013）：提交 JobRequest，worker_runners 同步执行，返回 JobResult。"""
+        """新接口（ADR-013）：提交 JobRequest，worker_runners 同步执行，返回 JobResult。
+
+        emit_event 闭包把 worker-side 事件（job_progress 等）通过 run_coroutine_threadsafe
+        投回主事件循环的 EventBus，供 SSE 订阅者消费。
+        """
+        loop = asyncio.get_running_loop()
+        bus = self._bus
+
+        def emit_event(ev: dict) -> None:
+            if bus is None:
+                return
+            et = ev.pop("type", None)
+            if not et:
+                return
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    bus.publish(Event(type=et, payload=ev)), loop,
+                )
+            except BaseException:  # noqa: BLE001
+                pass  # 事件丢失不影响任务本体
+
         self._active += 1
         await self._publish_size()
         try:
             async with self._lock:
-                return await asyncio.to_thread(run_sync, req, self._lru)
+                return await asyncio.to_thread(run_sync, req, self._lru, emit_event)
         finally:
             self._active -= 1
             await self._publish_size()

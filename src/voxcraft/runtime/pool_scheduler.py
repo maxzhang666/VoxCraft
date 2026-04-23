@@ -47,6 +47,7 @@ class PoolScheduler:
         self._ctx: SpawnContext = mp.get_context(start_method)  # type: ignore[assignment]
         self._submit_q: Queue = self._ctx.Queue()
         self._result_q: Queue = self._ctx.Queue()
+        self._event_q: Queue = self._ctx.Queue()  # worker → 主进程事件（进度等）
         self._worker: SpawnProcess | None = None
         self._lock = asyncio.Lock()  # 维持全局单任务语义
         self._active = 0
@@ -56,6 +57,7 @@ class PoolScheduler:
         self._current_job_id: str | None = None
 
         self._consumer_task: asyncio.Task | None = None
+        self._event_consumer_task: asyncio.Task | None = None
         self._started = False
 
     # ---------- 生命周期 ----------
@@ -66,12 +68,13 @@ class PoolScheduler:
         self._spawn_worker()
         loop = asyncio.get_running_loop()
         self._consumer_task = loop.create_task(self._result_consumer())
+        self._event_consumer_task = loop.create_task(self._event_consumer())
         self._started = True
 
     def _spawn_worker(self) -> None:
         p: SpawnProcess = self._ctx.Process(
             target=worker_main,
-            args=(self._submit_q, self._result_q, self._extra),
+            args=(self._submit_q, self._result_q, self._event_q, self._extra),
             name="voxcraft-worker",
             daemon=True,
         )
@@ -99,17 +102,21 @@ class PoolScheduler:
                     self._worker.terminate()
                     await asyncio.to_thread(self._worker.join, 2.0)
 
-        # 3. 给 result_consumer 送一个毒丸，让 blocking get() 返回
-        #    consumer 识别 sentinel (None,None) 后 return，事件循环可清理
+        # 3. 给 result_consumer / event_consumer 送毒丸，让 blocking get() 返回
         try:
             self._result_q.put_nowait((None, None))  # type: ignore[arg-type]
         except BaseException:  # noqa: BLE001
             pass
-        if self._consumer_task is not None:
-            try:
-                await asyncio.wait_for(self._consumer_task, timeout=2.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                self._consumer_task.cancel()
+        try:
+            self._event_q.put_nowait(None)  # type: ignore[arg-type]
+        except BaseException:  # noqa: BLE001
+            pass
+        for task in (self._consumer_task, self._event_consumer_task):
+            if task is not None:
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    task.cancel()
 
     # ---------- 核心：submit / cancel ----------
 
@@ -195,3 +202,26 @@ class PoolScheduler:
             if future is not None and not future.done():
                 # 跨线程设置 future（get 在线程池中拿到结果后回到主 loop）
                 loop.call_soon_threadsafe(future.set_result, result)
+
+    async def _event_consumer(self) -> None:
+        """worker event_queue → EventBus 的桥接。worker 端推 dict，主进程 publish。"""
+        while True:
+            try:
+                ev = await asyncio.to_thread(self._event_q.get)
+            except asyncio.CancelledError:
+                return
+            except BaseException as e:  # noqa: BLE001
+                _log.error("pool.event_consumer.error", extra={"err": str(e)})
+                await asyncio.sleep(0.1)
+                continue
+            if ev is None:  # 毒丸
+                return
+            if self._bus is None:
+                continue
+            et = ev.pop("type", None)
+            if not et:
+                continue
+            try:
+                await self._bus.publish(Event(type=et, payload=ev))
+            except BaseException:  # noqa: BLE001
+                pass  # 事件丢失不影响推理

@@ -1,15 +1,13 @@
 """PoolScheduler 专项集成测试（ADR-013）。
 
 通过 Mock Provider 的 "extra_class_imports" 机制注入到 worker 进程。
-Mock 的 load/transcribe/synthesize 都是瞬时操作，测试启动 worker 开销几百 ms 可接受。
+Mock 的 load/transcribe/synthesize 都是瞬时操作；forkserver 下整个测试文件 <1s。
 
 覆盖：
 - 启动 / 提交 / 关停
 - 多次提交串行执行
 - cancel running 任务 → 真中断 + worker 自动 respawn + 后续提交正常
-- worker 进程崩溃场景
-
-不在默认 CI 路径。markers=slow 是因为 spawn 子进程 ~500ms。
+- Provider unknown / cancel unknown
 """
 from __future__ import annotations
 
@@ -20,9 +18,6 @@ import pytest
 
 from voxcraft.runtime.pool_scheduler import PoolScheduler
 from voxcraft.runtime.scheduler_api import JobRequest
-
-
-pytestmark = pytest.mark.slow
 
 
 MOCK_IMPORTS = [

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added — SSE 进度桥接
+- **双 backend 进度推送**：
+  - `PoolScheduler` 加 `event_queue`（worker → 主进程）+ `event_consumer` 协程（转 EventBus）
+  - `InProcessScheduler` 用 `run_coroutine_threadsafe` 从 to_thread 线程投事件到主 loop bus
+- **`AsrProvider.transcribe(progress_cb=...)`** 接口扩展；`WhisperProvider` 按 segment 计算 `segment.end/duration` 汇报
+- 事件 payload：`{job_id, kind, progress: 0.0~1.0}`，前端 `useSse(["job_progress",...])` 已在订阅
+- 其他 Provider（Piper/Clone/Separate）暂不改——要么任务短、要么无原生进度接口
+- 新增 `test_asr_emits_job_progress_events` 端到端验证事件到达 EventBus
+
+### Changed
+- `test_pool_scheduler.py` 移除 `slow` mark（forkserver 下总耗时 <1s，无需排除）；进入默认 CI + coverage 统计
+- 覆盖率 **81.88%**（TOTAL），门槛 80% 保持
+
 ## [v0.2.0] — 2026-04-23
 
 架构跃迁版本。核心：`Scheduler` 抽象 + 进程池真取消（ADR-013）、OpenAI 兼容 API 层（ADR-012）、

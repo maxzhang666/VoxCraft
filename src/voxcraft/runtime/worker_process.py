@@ -42,9 +42,13 @@ def _install_extra_classes(extra: list[str]) -> None:
 def worker_main(
     submit_q: "Queue[JobRequest | None]",
     result_q: "Queue[tuple[str, JobResult]]",
+    event_q: "Queue[dict | None]",
     extra_class_imports: list[str],
 ) -> None:
-    """子进程入口。跑到 None sentinel / SIGTERM 时退出。"""
+    """子进程入口。跑到 None sentinel / SIGTERM 时退出。
+
+    event_q：推 `{type, ...}` dict 给主进程；主进程 event_consumer 转 EventBus → SSE。
+    """
     # SIGTERM 默认处理：解释器直接退出，未完成 job 的 future 由主进程的
     # cancel 路径设为 cancelled。不安装自定义 handler（防止和信号传递冲突）。
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -53,13 +57,19 @@ def worker_main(
     lru = _LruOne()
     _log.info("worker.started", extra={"pid": os.getpid()})
 
+    def emit(ev: dict) -> None:
+        try:
+            event_q.put_nowait(ev)
+        except BaseException:  # noqa: BLE001
+            pass  # 满 / 关闭时丢弃；不阻塞推理
+
     while True:
         req = submit_q.get()
         if req is None:
             _log.info("worker.shutdown")
             return
         try:
-            res = run_sync(req, lru)
+            res = run_sync(req, lru, emit)
         except BaseException as e:  # noqa: BLE001
             # run_sync 已做 VoxCraftError 转换；这里兜底最后一层
             res = JobResult(

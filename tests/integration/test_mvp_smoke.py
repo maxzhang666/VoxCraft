@@ -159,11 +159,11 @@ def test_retry_failed_job(client, mock_all_registered, monkeypatch):
     calls = {"n": 0}
     original = InMemoryMockAsrProvider.transcribe
 
-    def flaky(self, audio_path, language=None):
+    def flaky(self, audio_path, language=None, progress_cb=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
-        return original(self, audio_path, language=language)
+        return original(self, audio_path, language=language, progress_cb=progress_cb)
 
     monkeypatch.setattr(InMemoryMockAsrProvider, "transcribe", flaky)
 

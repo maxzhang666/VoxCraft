@@ -78,7 +78,10 @@ class WhisperProvider(AsrProvider):
         )
 
     def transcribe(
-        self, audio_path: str, language: str | None = None
+        self,
+        audio_path: str,
+        language: str | None = None,
+        progress_cb=None,
     ) -> AsrResult:
         if self._model is None:
             raise InferenceError(
@@ -89,14 +92,25 @@ class WhisperProvider(AsrProvider):
             segments_iter, whisper_info = self._model.transcribe(
                 audio_path, language=language
             )
-            segments = [
-                AsrSegment(start=s.start, end=s.end, text=s.text)
-                for s in segments_iter
-            ]
+            duration = whisper_info.duration or 0.0
+            segments: list[AsrSegment] = []
+            # faster-whisper 的 segments 是 generator——逐个汇报进度
+            for s in segments_iter:
+                segments.append(AsrSegment(start=s.start, end=s.end, text=s.text))
+                if progress_cb is not None and duration > 0:
+                    try:
+                        progress_cb(min(1.0, s.end / duration))
+                    except Exception:  # noqa: BLE001
+                        pass  # 进度回调失败不影响转录
+            if progress_cb is not None:
+                try:
+                    progress_cb(1.0)
+                except Exception:  # noqa: BLE001
+                    pass
             return AsrResult(
                 segments=segments,
                 language=whisper_info.language,
-                duration=whisper_info.duration,
+                duration=duration,
             )
         except Exception as e:
             raise InferenceError(

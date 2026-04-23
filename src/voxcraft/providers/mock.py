@@ -35,7 +35,15 @@ class InMemoryMockAsrProvider(AsrProvider):
             vram_mb=0,
         )
 
-    def transcribe(self, audio_path: str, language: str | None = None) -> AsrResult:
+    def transcribe(
+        self,
+        audio_path: str,
+        language: str | None = None,
+        progress_cb=None,
+    ) -> AsrResult:
+        if progress_cb is not None:
+            progress_cb(0.5)
+            progress_cb(1.0)
         return AsrResult(
             segments=[AsrSegment(start=0.0, end=1.0, text="mock text")],
             language=language or "zh",
