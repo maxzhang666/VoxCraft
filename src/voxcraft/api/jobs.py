@@ -64,11 +64,34 @@ def get_job(id: str, session: Session = Depends(get_session)):
 
 
 @router.delete("/{id}", status_code=204)
-def delete_job(id: str, session: Session = Depends(get_session)) -> None:
+async def delete_job(
+    id: str, request: Request, session: Session = Depends(get_session)
+) -> None:
     j = session.get(Job, id)
     if j is None:
         raise _not_found(id)
-    # 同步删产物 + 原始上传
+
+    # 1. running 任务：请求 scheduler 真中断；成功则落 cancelled 审计
+    #    - pool backend 会 SIGTERM worker 后 spawn；真释放 GPU
+    #    - inprocess backend 无法中断同步 C 扩展，返回 False，后台自然跑完
+    #      后在 _finalize_* 里检查到 cancelled 就跳过写回
+    if j.status == "running":
+        cancelled = await request.app.state.scheduler.cancel(j.id)
+        if cancelled:
+            bus = getattr(request.app.state, "event_bus", None)
+            j.status = "cancelled"
+            j.finished_at = datetime.utcnow()
+            session.add(j)
+            session.commit()
+            if bus is not None:
+                await bus.publish(
+                    Event(
+                        type="job_status_changed",
+                        payload={"job_id": id, "kind": j.kind, "status": "cancelled"},
+                    )
+                )
+
+    # 2. 清产物 + 原始上传
     paths: list[str] = []
     if j.source_path:
         paths.append(j.source_path)
@@ -81,6 +104,8 @@ def delete_job(id: str, session: Session = Depends(get_session)) -> None:
             Path(p).unlink(missing_ok=True)
         except OSError:
             pass  # 忽略清理失败
+
+    # 3. 删 DB 行
     session.delete(j)
     session.commit()
 

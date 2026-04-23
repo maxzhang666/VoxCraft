@@ -1,15 +1,18 @@
-"""业务 API：/asr /tts /tts/clone /separate（全异步）。
+"""业务 API：/asr /tts /tts/clone /separate（全异步，ADR-011 + ADR-013）。
 
 HTTP 端点仅做：参数校验 → 落盘上传 → 写 Job(pending) → 派发后台 task → 返回 {job_id, status}。
-真正推理在 `run_job` 协程执行（可被 /jobs/{id}/retry 复用）。
+真正推理由 `run_job` 协程驱动：
+  1. 读 DB + snapshot provider 配置
+  2. 打包 JobRequest
+  3. `scheduler.submit(req)` —— 后端（InProcess / Pool）实现真实执行
+  4. 按 JobResult + kind 写回 DB + SSE
 
-状态流转：pending → running → succeeded | failed
+状态流转：pending → running → succeeded | failed | cancelled
 每次状态变化通过 EventBus 发 `job_status_changed`，SSE 下发前端。
 """
 from __future__ import annotations
 
 import asyncio
-import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,13 +28,7 @@ from voxcraft.db.engine import get_engine
 from voxcraft.db.models import Job, Provider, VoiceRef
 from voxcraft.errors import ValidationError, VoxCraftError
 from voxcraft.events.bus import Event, EventBus
-from voxcraft.providers.base import (
-    AsrProvider,
-    CloningProvider,
-    SeparatorProvider,
-    TtsProvider,
-)
-from voxcraft.providers.registry import instantiate
+from voxcraft.runtime.scheduler_api import JobRequest, JobResult
 
 
 log = structlog.get_logger()
@@ -97,12 +94,6 @@ async def _publish_status(
     if error_code:
         payload["error_code"] = error_code
     await bus.publish(Event(type="job_status_changed", payload=payload))
-
-
-def _exc_to_code_msg(exc: BaseException) -> tuple[str, str]:
-    if isinstance(exc, VoxCraftError):
-        return exc.code, exc.message
-    return "INTERNAL_ERROR", str(exc)
 
 
 # ---------- HTTP 端点：提交入队 ----------
@@ -253,11 +244,15 @@ async def list_voices(session: Session = Depends(get_session)):
 # ---------- 后台 Runner（异步提交 + retry 共用入口）----------
 
 async def run_job(job_id: str, app_state) -> None:
-    """按 kind 分发到对应 runner。在 asyncio.create_task 中调用。"""
+    """读 DB → 打包 JobRequest → scheduler.submit → 写回 DB + SSE。
+
+    推理在 scheduler 后端执行（InProcess = 主进程 to_thread；Pool = 子进程）。
+    本协程只负责投递 + 写回。
+    """
     bus: EventBus | None = getattr(app_state, "event_bus", None)
     scheduler = app_state.scheduler
-    lru = app_state.lru
 
+    # 1. 读 DB + snapshot Provider 配置，mark running
     with Session(get_engine()) as session:
         job = session.get(Job, job_id)
         if job is None:
@@ -277,18 +272,21 @@ async def run_job(job_id: str, app_state) -> None:
         if p_row is None:
             await _finalize_failure(
                 bus, job_id, kind,
-                VoxCraftError(
-                    f"Provider disappeared: {job.provider_name}",
-                    code="PROVIDER_NOT_FOUND",
-                ),
+                code="PROVIDER_NOT_FOUND",
+                message=f"Provider disappeared: {job.provider_name}",
             )
             return
-        # snapshot 所需字段（session 关闭前）
-        request_meta = dict(job.request or {})
-        source_path = job.source_path
-        class_name = p_row.class_name
-        p_name = p_row.name
-        p_config = dict(p_row.config or {})
+
+        req = JobRequest(
+            job_id=job_id,
+            kind=kind,  # type: ignore[arg-type]
+            provider_name=p_row.name,
+            class_name=p_row.class_name,
+            provider_config=dict(p_row.config or {}),
+            request_meta=dict(job.request or {}),
+            source_path=job.source_path,
+            output_dir=str(_outputs_dir()),
+        )
 
         job.status = "running"
         job.started_at = datetime.now(UTC)
@@ -297,22 +295,27 @@ async def run_job(job_id: str, app_state) -> None:
 
     await _publish_status(bus, job_id=job_id, kind=kind, status="running")
 
-    inst = instantiate(class_name, name=p_name, config=p_config)
-
+    # 2. 投递给后端 scheduler 执行
     try:
-        if kind == "asr":
-            await _run_asr(job_id, inst, source_path, request_meta, scheduler, lru)
-        elif kind == "tts":
-            await _run_tts(job_id, inst, request_meta, scheduler, lru)
-        elif kind == "clone":
-            await _run_clone(job_id, inst, source_path, request_meta, scheduler, lru)
-        elif kind == "separate":
-            await _run_separate(job_id, inst, source_path, request_meta, scheduler, lru)
-        else:
-            raise VoxCraftError(f"Unknown kind: {kind}", code="UNKNOWN_KIND")
-        await _publish_status(bus, job_id=job_id, kind=kind, status="succeeded")
-    except BaseException as e:
-        await _finalize_failure(bus, job_id, kind, e)
+        result: JobResult = await scheduler.submit(req)
+    except BaseException as e:  # noqa: BLE001
+        # scheduler 自身故障（worker 崩溃等）——极少数情况
+        await _finalize_failure(
+            bus, job_id, kind,
+            code="INTERNAL_ERROR", message=f"{type(e).__name__}: {e}",
+        )
+        return
+
+    # 3. 写回 DB（若期间用户 cancel 已写 cancelled，不覆盖）
+    if not result.ok:
+        await _finalize_failure(
+            bus, job_id, kind,
+            code=result.error_code or "INFERENCE_ERROR",
+            message=result.error_message or "Inference failed",
+        )
+        return
+
+    await _finalize_success(bus, job_id, kind, result, req)
 
 
 def _kind_to_provider_kind(kind: str) -> str:
@@ -321,150 +324,59 @@ def _kind_to_provider_kind(kind: str) -> str:
 
 
 async def _finalize_failure(
-    bus: EventBus | None, job_id: str, kind: str, exc: BaseException
+    bus: EventBus | None, job_id: str, kind: str, *, code: str, message: str,
 ) -> None:
-    code, msg = _exc_to_code_msg(exc)
     with Session(get_engine()) as session:
         j = session.get(Job, job_id)
-        if j is not None:
-            j.status = "failed"
-            j.error_code = code
-            j.error_message = msg
-            j.finished_at = datetime.now(UTC)
-            session.add(j)
-            session.commit()
-    log.warning("run_job.failed", job_id=job_id, kind=kind, code=code, msg=msg)
+        if j is None or j.status == "cancelled":
+            # 用户期间已 DELETE + cancel；不覆盖
+            return
+        j.status = "failed"
+        j.error_code = code
+        j.error_message = message
+        j.finished_at = datetime.now(UTC)
+        session.add(j)
+        session.commit()
+    log.warning("run_job.failed", job_id=job_id, kind=kind, code=code, msg=message)
     await _publish_status(
         bus, job_id=job_id, kind=kind, status="failed", error_code=code,
     )
 
 
-# ---------- 各 kind runner ----------
-
-async def _run_asr(job_id, inst, source_path, request_meta, scheduler, lru):
-    assert isinstance(inst, AsrProvider)
-    language = request_meta.get("language")
-
-    async def run():
-        await lru.ensure_loaded(inst)
-        return inst.transcribe(source_path, language=language)
-
-    result = await scheduler.run(run)
-    segments = [
-        {"start": s.start, "end": s.end, "text": s.text} for s in result.segments
-    ]
+async def _finalize_success(
+    bus: EventBus | None,
+    job_id: str,
+    kind: str,
+    result: JobResult,
+    req: JobRequest,
+) -> None:
     with Session(get_engine()) as session:
         j = session.get(Job, job_id)
-        if j is None:
+        if j is None or j.status == "cancelled":
             return
-        j.status = "succeeded"
-        j.result = {
-            "language": result.language,
-            "duration": result.duration,
-            "segment_count": len(segments),
-            "segments": segments,
-        }
-        j.progress = 1.0
-        j.finished_at = datetime.now(UTC)
-        session.add(j)
-        session.commit()
 
-
-async def _run_tts(job_id, inst, request_meta, scheduler, lru):
-    assert isinstance(inst, TtsProvider)
-    text = request_meta["text"]
-    voice_id = request_meta["voice_id"]
-    speed = request_meta.get("speed", 1.0)
-    fmt = request_meta.get("format", "wav")
-
-    async def run():
-        await lru.ensure_loaded(inst)
-        return inst.synthesize(text, voice_id=voice_id, speed=speed, format=fmt)
-
-    audio_bytes = await scheduler.run(run)
-    suffix = {"wav": ".wav", "mp3": ".mp3", "ogg": ".ogg"}[fmt]
-    output_path = _outputs_dir() / f"{job_id}{suffix}"
-    output_path.write_bytes(audio_bytes)
-
-    with Session(get_engine()) as session:
-        j = session.get(Job, job_id)
-        if j is None:
-            return
-        j.status = "succeeded"
-        j.output_path = str(output_path)
-        j.progress = 1.0
-        j.finished_at = datetime.now(UTC)
-        session.add(j)
-        session.commit()
-
-
-async def _run_clone(job_id, inst, source_path, request_meta, scheduler, lru):
-    assert isinstance(inst, CloningProvider)
-    text = request_meta["text"]
-    speaker_name = request_meta.get("speaker_name")
-
-    async def run():
-        await lru.ensure_loaded(inst)
-        voice_id = inst.clone_voice(source_path, speaker_name=speaker_name)
-        audio = inst.synthesize(text, voice_id=voice_id)
-        return voice_id, audio
-
-    voice_id, audio_bytes = await scheduler.run(run)
-
-    ref_dir = _outputs_dir() / "voices"
-    ref_dir.mkdir(parents=True, exist_ok=True)
-    ref_final = ref_dir / f"{voice_id}{Path(source_path).suffix}"
-    shutil.copy2(source_path, ref_final)
-
-    output_path = _outputs_dir() / f"{job_id}.wav"
-    output_path.write_bytes(audio_bytes)
-
-    with Session(get_engine()) as session:
-        existing = session.get(VoiceRef, voice_id)
-        if existing is None:
-            session.add(
-                VoiceRef(
-                    id=voice_id,
-                    speaker_name=speaker_name,
-                    reference_audio_path=str(ref_final),
-                    provider_name=inst.name,
+        # Clone 特殊：新增 VoiceRef + 把 voice_id 合入 request
+        if kind == "clone" and result.voice_id:
+            existing = session.get(VoiceRef, result.voice_id)
+            if existing is None:
+                suffix = Path(req.source_path).suffix if req.source_path else ".wav"
+                ref_final = _outputs_dir() / "voices" / f"{result.voice_id}{suffix}"
+                session.add(
+                    VoiceRef(
+                        id=result.voice_id,
+                        speaker_name=req.request_meta.get("speaker_name"),
+                        reference_audio_path=str(ref_final),
+                        provider_name=req.provider_name,
+                    )
                 )
-            )
-        j = session.get(Job, job_id)
-        if j is not None:
-            j.status = "succeeded"
-            j.request = {**(j.request or {}), "voice_id": voice_id}
-            j.output_path = str(output_path)
-            j.progress = 1.0
-            j.finished_at = datetime.now(UTC)
-            session.add(j)
-        session.commit()
+            j.request = {**(j.request or {}), "voice_id": result.voice_id}
 
-
-async def _run_separate(job_id, inst, source_path, request_meta, scheduler, lru):
-    assert isinstance(inst, SeparatorProvider)
-
-    async def run():
-        await lru.ensure_loaded(inst)
-        return inst.separate(source_path)
-
-    result = await scheduler.run(run)
-    output_dir = _outputs_dir()
-    vocals_final = output_dir / f"{job_id}-vocals.wav"
-    instr_final = output_dir / f"{job_id}-instrumental.wav"
-    shutil.copy2(result.vocals_path, vocals_final)
-    shutil.copy2(result.instrumental_path, instr_final)
-
-    with Session(get_engine()) as session:
-        j = session.get(Job, job_id)
-        if j is None:
-            return
         j.status = "succeeded"
-        j.output_extras = {
-            "vocals": str(vocals_final),
-            "instrumental": str(instr_final),
-        }
+        j.result = result.result
+        j.output_path = result.output_path
+        j.output_extras = result.output_extras
         j.progress = 1.0
         j.finished_at = datetime.now(UTC)
         session.add(j)
         session.commit()
+    await _publish_status(bus, job_id=job_id, kind=kind, status="succeeded")

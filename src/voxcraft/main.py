@@ -19,7 +19,8 @@ from voxcraft.events.bus import get_bus
 from voxcraft.logging import setup_logging
 from voxcraft.models_lib.service import ModelDownloadService
 from voxcraft.runtime.lru import LruOne
-from voxcraft.runtime.scheduler import Scheduler
+from voxcraft.runtime.pool_scheduler import PoolScheduler
+from voxcraft.runtime.scheduler import InProcessScheduler
 
 
 log = structlog.get_logger()
@@ -35,11 +36,25 @@ async def lifespan(app: FastAPI):
     inserted = seed_default_providers(engine)
     manual_scanned = scan_existing_models(engine)
     bus = get_bus()
+    settings = get_settings()
+
     app.state.event_bus = bus
-    app.state.scheduler = Scheduler(bus=bus)
+
+    # Scheduler backend 按配置实例化（ADR-013）
+    # - pool: worker 子进程 + 真取消（生产推荐）
+    # - inprocess: 当前主进程 asyncio 执行（默认；测试友好）
+    if settings.scheduler_backend == "pool":
+        scheduler = PoolScheduler(bus=bus)
+        await scheduler.start()
+        app.state.scheduler = scheduler
+    else:
+        app.state.scheduler = InProcessScheduler(bus=bus)
+
+    # admin.test_provider 仍使用 app.state.lru 做探活；与 scheduler 内 LRU 是不同实例。
+    # 两处 LRU 不同步的代价：探活加载的模型不会被推理路径复用（下次推理会重新加载）。
+    # 权衡：探活是偶发人工动作，不值得为此让探活穿透 scheduler 接口（侵入性大）。
     app.state.lru = LruOne(bus=bus)
 
-    settings = get_settings()
     download_svc = ModelDownloadService(
         engine=engine, bus=bus, models_dir=settings.models_dir
     )
@@ -51,8 +66,12 @@ async def lifespan(app: FastAPI):
         seeded_providers=inserted,
         manual_models_scanned=manual_scanned,
         orphan_downloads_cleaned=orphans,
+        scheduler_backend=settings.scheduler_backend,
     )
-    yield
+    try:
+        yield
+    finally:
+        await app.state.scheduler.shutdown()
 
 
 def create_app() -> FastAPI:

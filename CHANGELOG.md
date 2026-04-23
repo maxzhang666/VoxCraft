@@ -4,12 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Docs
-- **ADR-013 Accepted**（[process-pool-cancel](docs/superpowers/specs/voxcraft/decisions/ADR-013-process-pool-cancel.md)）：Worker 子进程调度 + Running 任务真取消的完整设计固化。否决"伪取消"方案，选 `multiprocessing.Process` + `SIGTERM` 路径；接受 LRU 冷启动代价换取真中断能力。**实施留给下一会话窗口**（代码改动涉及 scheduler/business/jobs/main 多模块 + 新 worker 入口，不在当前会话塞入）。
+### Added — ADR-013 进程池 + 真取消实装
+- **`PoolScheduler`**（`runtime/pool_scheduler.py`）：worker 子进程常驻 + mp.Queue 双向 IPC + asyncio.Future 等待。Cancel running 任务 = SIGTERM worker + respawn；真释放 GPU
+- **`worker_process.py`**：worker 子进程主循环（LRU=1 本进程内维护，同步执行，无 asyncio）。支持 `extra_class_imports` 测试注入 Mock Provider
+- **`worker_runners.py`**：四个 kind 的纯同步 runner（ASR/TTS/Clone/Separate），从 `business.py` 提取，pickle-safe 输入输出
+- **`runtime/scheduler_api.py`**：`Scheduler` Protocol + `JobRequest` / `JobResult` dataclass（跨进程 pickle）
+- `start_method` 参数（`spawn`/`forkserver`/`fork`）：生产用 spawn（CUDA 安全），测试用 forkserver（绕过 pytest 下 sys.argv[0] re-import 问题）
+- **5 个 pool 专项测试**：submit / 串行 / cancel running + respawn / cancel unknown / provider unknown；155 passed, 3 skipped（原 150 + 5 新）
 
-### Added
-- `Scheduler.cancel(job_id) -> bool` 接口（ADR-013 前置）；in-process 实现固定返回 False
-- `Settings.scheduler_backend: Literal["inprocess","pool"]`（默认 `inprocess`），预留生产切换 pool 的配置项
+### Changed — ADR-013 接入
+- `InProcessScheduler.submit(JobRequest)`：新接口兼容 `PoolScheduler`；保留旧 `run(coro_fn)` 向后兼容
+- `business.run_job`：从"Provider 实例化 + scheduler.run(closure)"改为"打包 `JobRequest` → `scheduler.submit(req)` → 按 `JobResult` 写回 DB"。四个 `_run_*` 函数删除（逻辑搬到 `worker_runners.py`）
+- `jobs.py DELETE`：running 任务调 `scheduler.cancel(job_id)`；返回 True 时即时标 cancelled + 发 SSE；False 时保留旧行为（硬删 + 后台跑完）
+- `main.py lifespan`：按 `settings.scheduler_backend` 实例化 InProcess / Pool；shutdown 时调度器优雅停机
+- **默认 backend 仍为 `inprocess`**（测试友好、CI 零依赖）；生产部署可 `VOXCRAFT_SCHEDULER_BACKEND=pool` 开启真取消
+
+### Added（前期）
+- `Scheduler.cancel(job_id) -> bool` 接口（ADR-013 前置）；InProcess 实现固定返回 False
+- `Settings.scheduler_backend: Literal["inprocess","pool"]`
 - **pytest-cov 接入 + 80% 覆盖率门槛**：`make coverage` 一键跑；HTML 输出 `htmlcov/`；dev 依赖加 `pytest-cov>=6.0`。当前基线 **85.0%**（TOTAL）
 - **首页快捷入口**：Dashboard 四个能力大卡片（🎧/🔊/🎭/🎸）点击即跳对应能力页
 - **首页最近任务 SSE 实时刷新**：订阅 `job_status_changed`，状态变化即刻反映；10s 兜底轮询保留
