@@ -1,0 +1,48 @@
+// 中文文案集中管理（未来可接入 i18next）
+export const t = {
+  appName: "VoxCraft",
+  nav: {
+    dashboard: "首页",
+    asr: "语音转文字",
+    tts: "语音合成",
+    cloning: "语音克隆",
+    separator: "人声分离",
+    settings: "设置",
+  },
+  settingsNav: {
+    models: "模型管理",
+    modelsLibrary: "模型库",
+    llm: "LLM 配置",
+    system: "系统诊断",
+    jobs: "任务队列",
+  },
+  actions: {
+    create: "新建",
+    newAsr: "新建转录",
+    newTts: "新建合成",
+    newClone: "新建克隆",
+    newSeparate: "新建分离",
+    cancel: "取消",
+    confirm: "确认",
+    submit: "提交",
+    delete: "删除",
+    edit: "编辑",
+    setDefault: "设为默认",
+    test: "探活",
+    download: "下载",
+    play: "播放",
+  },
+  common: {
+    loading: "加载中...",
+    empty: "还没有历史记录，点右上角新建一个吧",
+    retry: "重试",
+    disconnected: "已断线（轮询兜底）",
+  },
+  status: {
+    pending: "等待中",
+    running: "运行中",
+    succeeded: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  },
+};

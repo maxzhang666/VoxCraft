@@ -1,5 +1,6 @@
 .idea
 .venv
+.vscode
 docs/
 
 # macOS
@@ -17,3 +18,8 @@ build/
 dist/
 web/node_modules
 web/dist
+
+# 运行时产物（不入 git）
+data/
+models/
+.env

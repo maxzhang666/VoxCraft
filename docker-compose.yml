@@ -1,0 +1,47 @@
+# VoxCraft 一键启动（ADR-005）
+# 用法：
+#   cp .env.example .env  # 按需填写密钥
+#   docker compose up -d
+
+services:
+  voxcraft:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: voxcraft:0.1.0
+    container_name: voxcraft
+    restart: unless-stopped
+
+    ports:
+      - "8001:8001"
+
+    volumes:
+      - ./models:/models     # 模型缓存（预下载到此目录）
+      - ./data:/data         # SQLite + outputs 产物持久化
+
+    env_file:
+      - .env
+
+    environment:
+      VOXCRAFT_PORT: "8001"
+      VOXCRAFT_DB: /data/voxcraft.sqlite
+      VOXCRAFT_OUTPUT_DIR: /data/outputs
+      VOXCRAFT_MODELS_DIR: /models
+      VOXCRAFT_LOG_LEVEL: INFO
+
+    # GPU 支持：需宿主机装 nvidia-container-toolkit
+    # 无 GPU 环境运行：注释掉 deploy 整段即可
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

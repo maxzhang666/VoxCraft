@@ -1,0 +1,88 @@
+// 动森风 Design Token（见 docs/superpowers/specs/voxcraft/architecture/ui-theme.md）
+:root {
+  // Brand
+  --vc-color-primary: #19c8b9;
+  --vc-color-primary-hover: #3dd4c6;
+  --vc-color-primary-active: #11a89b;
+  --vc-color-primary-bg: #e6f9f6;
+
+  // Status
+  --vc-color-success: #6fba2c;
+  --vc-color-warning: #f5c31c;
+  --vc-color-error: #e05a5a;
+
+  // Text
+  --vc-color-text-primary: #794f27;
+  --vc-color-text-secondary: #9f927d;
+  --vc-color-text-disabled: #c4b89e;
+
+  // Background
+  --vc-color-bg: #f8f8f0;
+  --vc-color-bg-secondary: #f0e8d8;
+  --vc-color-bg-card: #ffffff;
+
+  // Border
+  --vc-color-border: #d7cdbb;
+  --vc-color-border-strong: #9f927d;
+
+  // Typography
+  --vc-font-family:
+    "M PLUS Rounded 1c", "Noto Sans JP", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, sans-serif;
+  --vc-font-size-small: 12px;
+  --vc-font-size-base: 14px;
+  --vc-font-size-large: 16px;
+  --vc-line-height: 1.5715;
+
+  // Spacing
+  --vc-spacing-xs: 4px;
+  --vc-spacing-sm: 8px;
+  --vc-spacing-md: 12px;
+  --vc-spacing-lg: 16px;
+  --vc-spacing-xl: 24px;
+
+  // Radius
+  --vc-radius-sm: 12px;
+  --vc-radius-base: 18px;
+  --vc-radius-lg: 24px;
+
+  // Shadow
+  --vc-shadow-sm: 0 1px 2px rgba(121, 79, 39, 0.08);
+  --vc-shadow-base: 0 4px 12px rgba(121, 79, 39, 0.1);
+  --vc-shadow-lg: 0 8px 24px rgba(121, 79, 39, 0.14);
+  --vc-shadow-press: inset 0 2px 4px rgba(121, 79, 39, 0.18);
+
+  // Motion
+  --vc-motion-fast: 150ms;
+  --vc-motion-base: 250ms;
+  --vc-motion-slow: 350ms;
+  --vc-motion-easing: cubic-bezier(0.4, 0, 0.2, 1);
+
+  // Heights
+  --vc-height-sm: 32px;
+  --vc-height-base: 40px;
+  --vc-height-lg: 48px;
+
+  // --- Semi 主题覆盖（映射到 Semi 变量）---
+  --semi-color-primary: var(--vc-color-primary);
+  --semi-color-primary-hover: var(--vc-color-primary-hover);
+  --semi-color-primary-active: var(--vc-color-primary-active);
+  --semi-color-primary-light-default: var(--vc-color-primary-bg);
+
+  --semi-color-success: var(--vc-color-success);
+  --semi-color-warning: var(--vc-color-warning);
+  --semi-color-danger: var(--vc-color-error);
+
+  --semi-color-text-0: var(--vc-color-text-primary);
+  --semi-color-text-1: var(--vc-color-text-secondary);
+  --semi-color-text-2: var(--vc-color-text-secondary);
+  --semi-color-disabled-text: var(--vc-color-text-disabled);
+
+  --semi-color-bg-0: var(--vc-color-bg);
+  --semi-color-bg-1: var(--vc-color-bg-secondary);
+  --semi-color-bg-2: var(--vc-color-bg-card);
+  --semi-color-bg-3: var(--vc-color-bg-card);
+
+  --semi-color-border: var(--vc-color-border);
+  --semi-color-nav-bg: var(--vc-color-bg-card);
+}

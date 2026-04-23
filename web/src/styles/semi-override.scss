@@ -1,0 +1,61 @@
+// Semi 组件结构样式覆盖（Token 无法覆盖的部分：圆角、阴影、按压反馈）
+
+.semi-button {
+  border-radius: var(--vc-radius-sm);
+  transition:
+    transform var(--vc-motion-fast) var(--vc-motion-easing),
+    box-shadow var(--vc-motion-fast) var(--vc-motion-easing),
+    background var(--vc-motion-base) var(--vc-motion-easing);
+
+  &:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: var(--vc-shadow-press);
+  }
+}
+
+.semi-button-primary {
+  font-weight: 500;
+}
+
+.semi-card,
+.semi-modal-content,
+.semi-sidesheet-inner {
+  border-radius: var(--vc-radius-base);
+  box-shadow: var(--vc-shadow-base);
+}
+
+.semi-table-wrapper,
+.semi-select-selection,
+.semi-input-wrapper,
+.semi-input-number,
+.semi-textarea-wrapper {
+  border-radius: var(--vc-radius-sm);
+}
+
+.semi-tag {
+  border-radius: 999px;
+  padding: 0 10px;
+}
+
+.semi-empty {
+  color: var(--vc-color-text-secondary);
+}
+
+.semi-navigation {
+  border-right: 1px solid var(--vc-color-border);
+}
+
+.semi-navigation-item {
+  border-radius: var(--vc-radius-sm);
+  margin: 2px 8px;
+}
+
+.semi-navigation-item-selected {
+  background-color: var(--vc-color-primary-bg) !important;
+  color: var(--vc-color-primary) !important;
+  font-weight: 500;
+}
+
+.semi-progress-track {
+  border-radius: 999px;
+}

@@ -1,0 +1,40 @@
+import { createBrowserRouter, Navigate } from "react-router-dom";
+
+import { MainLayout } from "@/layouts/MainLayout";
+import { SettingsLayout } from "@/layouts/SettingsLayout";
+import { AsrPage } from "@/pages/asr/AsrPage";
+import { CloningPage } from "@/pages/cloning/CloningPage";
+import { Dashboard } from "@/pages/Dashboard";
+import { SeparatorPage } from "@/pages/separator/SeparatorPage";
+import { TtsPage } from "@/pages/tts/TtsPage";
+import { GlobalJobsQueue } from "@/pages/settings/GlobalJobsQueue";
+import { LlmConfig } from "@/pages/settings/LlmConfig";
+import { ModelsLibrary } from "@/pages/settings/ModelsLibrary";
+import { ModelsManage } from "@/pages/settings/ModelsManage";
+import { SystemDiagnosis } from "@/pages/settings/SystemDiagnosis";
+
+export const router = createBrowserRouter([
+  {
+    path: "/",
+    element: <MainLayout />,
+    children: [
+      { index: true, element: <Dashboard /> },
+      { path: "asr", element: <AsrPage /> },
+      { path: "tts", element: <TtsPage /> },
+      { path: "cloning", element: <CloningPage /> },
+      { path: "separator", element: <SeparatorPage /> },
+      {
+        path: "settings",
+        element: <SettingsLayout />,
+        children: [
+          { index: true, element: <Navigate to="models" replace /> },
+          { path: "models", element: <ModelsManage /> },
+          { path: "models-library", element: <ModelsLibrary /> },
+          { path: "llm", element: <LlmConfig /> },
+          { path: "system", element: <SystemDiagnosis /> },
+          { path: "jobs", element: <GlobalJobsQueue /> },
+        ],
+      },
+    ],
+  },
+]);

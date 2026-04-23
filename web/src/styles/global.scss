@@ -1,0 +1,41 @@
+@use "./tokens.scss";
+@use "./semi-override.scss";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--vc-font-family);
+  font-size: var(--vc-font-size-base);
+  line-height: var(--vc-line-height);
+  color: var(--vc-color-text-primary);
+  background-color: var(--vc-color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--vc-color-primary);
+  text-decoration: none;
+  &:hover {
+    color: var(--vc-color-primary-hover);
+  }
+}
+
+// 自定义滚动条（柔和不突兀）
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--vc-color-border);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--vc-color-border-strong);
+}
