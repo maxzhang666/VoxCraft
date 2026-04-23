@@ -2,7 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [v0.2.0] — 2026-04-23
+
+架构跃迁版本。核心：`Scheduler` 抽象 + 进程池真取消（ADR-013）、OpenAI 兼容 API 层（ADR-012）、
+全量异步化稳定化（ADR-011）、体验打磨。
+
+生产部署可通过 `VOXCRAFT_SCHEDULER_BACKEND=pool` 切换到真取消后端；默认仍为 `inprocess` 保证零依赖。
 
 ### Added — ADR-013 进程池 + 真取消实装
 - **`PoolScheduler`**（`runtime/pool_scheduler.py`）：worker 子进程常驻 + mp.Queue 双向 IPC + asyncio.Future 等待。Cancel running 任务 = SIGTERM worker + respawn；真释放 GPU
