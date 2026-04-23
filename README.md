@@ -14,6 +14,27 @@
 | 人声分离 | `POST /separate` | Demucs |
 | 管理 UI | `GET /ui/` | React + Semi |
 
+### 异步语义（v0.1.3 起）
+
+所有业务端点**提交即返回**，真正执行由后台 runner 调度：
+
+```
+POST /asr | /tts | /tts/clone | /separate
+  → 202 Accepted
+  { "job_id": "uuid", "status": "pending" }
+```
+
+获取结果的两条路径：
+
+1. **订阅 SSE** `GET /admin/events`（推荐）——监听 `job_status_changed`，收到 `succeeded` 时再拉详情
+2. **轮询** `GET /jobs/{id}` 直到 `status ∈ {succeeded, failed, cancelled}`
+
+产物下载：`GET /jobs/{id}/output`（或 `?key=vocals` / `?key=instrumental` 多产物场景）。
+
+失败任务支持 `POST /jobs/{id}/retry` 复用同一 `job_id` 重试（ASR/Clone/Separate 需原始上传仍在磁盘）。
+
+详见 [ADR-011](docs/superpowers/specs/voxcraft/decisions/ADR-011-async-by-default.md) 与 [05-api.md](docs/superpowers/specs/voxcraft/05-api.md)。
+
 ## 部署（Docker）
 
 ### 前置
