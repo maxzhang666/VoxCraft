@@ -1,9 +1,19 @@
-import { Select, Space, Table, Typography } from "@douyinfe/semi-ui";
+import {
+  Button,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Toast,
+  Typography,
+} from "@douyinfe/semi-ui";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useState } from "react";
 
-import { listJobs } from "@/api/jobs";
+import { deleteJob, listJobs, retryJob } from "@/api/jobs";
+import { JobDetailsModal } from "@/components/JobDetailsModal";
 import { StatusTag } from "@/components/StatusTag";
+import { useSse } from "@/hooks/useSse";
 import type { Job, JobKind, JobStatus } from "@/types/api";
 
 const { Title } = Typography;
@@ -22,6 +32,7 @@ const STATUS_OPTIONS = [
   { label: "运行中", value: "running" },
   { label: "已完成", value: "succeeded" },
   { label: "失败", value: "failed" },
+  { label: "已取消", value: "cancelled" },
 ];
 
 export function GlobalJobsQueue() {
@@ -29,6 +40,7 @@ export function GlobalJobsQueue() {
   const [status, setStatus] = useState<JobStatus | "">("");
   const [rows, setRows] = useState<Job[]>([]);
   const [loading, setLoading] = useState(false);
+  const [detailsJob, setDetailsJob] = useState<Job | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -48,6 +60,24 @@ export function GlobalJobsQueue() {
     reload();
   }, [reload]);
 
+  // SSE 驱动实时刷新：任何 Job 状态变化都重拉当前过滤结果
+  useSse(["job_status_changed", "job_progress"], reload);
+
+  const onDelete = async (id: string) => {
+    await deleteJob(id);
+    Toast.success("已删除");
+    reload();
+  };
+
+  const onRetry = async (id: string) => {
+    try {
+      await retryJob(id);
+      Toast.info("已重新入队");
+    } catch {
+      // 拦截器已提示
+    }
+  };
+
   const columns = [
     {
       title: "ID",
@@ -55,24 +85,50 @@ export function GlobalJobsQueue() {
       width: 140,
       render: (id: string) => id.slice(0, 12),
     },
-    { title: "类型", dataIndex: "kind", width: 100 },
+    { title: "类型", dataIndex: "kind", width: 90 },
     {
       title: "状态",
       dataIndex: "status",
-      width: 120,
+      width: 110,
       render: (s: JobStatus) => <StatusTag status={s} />,
     },
     {
       title: "进度",
       dataIndex: "progress",
-      width: 100,
+      width: 80,
       render: (p: number) => `${Math.round(p * 100)}%`,
     },
-    { title: "Provider", dataIndex: "provider_name", width: 200 },
+    { title: "Provider", dataIndex: "provider_name", width: 180 },
     {
       title: "创建时间",
       dataIndex: "created_at",
+      width: 170,
       render: (t: string) => dayjs(t).format("YYYY-MM-DD HH:mm:ss"),
+    },
+    {
+      title: "操作",
+      width: 220,
+      render: (_: unknown, j: Job) => (
+        <Space>
+          <Button size="small" type="tertiary" onClick={() => setDetailsJob(j)}>
+            详情
+          </Button>
+          {(j.status === "failed" || j.status === "cancelled") && (
+            <Button size="small" onClick={() => onRetry(j.id)}>
+              重试
+            </Button>
+          )}
+          <Popconfirm
+            title={`删除任务 ${j.id.slice(0, 8)} ？`}
+            content="原始上传与产物文件将一并清除，不可恢复。"
+            onConfirm={() => onDelete(j.id)}
+          >
+            <Button size="small" type="danger">
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
     },
   ];
 
@@ -102,6 +158,8 @@ export function GlobalJobsQueue() {
         loading={loading}
         pagination={{ pageSize: 20 }}
       />
+
+      <JobDetailsModal job={detailsJob} onClose={() => setDetailsJob(null)} />
     </div>
   );
 }

@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
 - **首页快捷入口**：Dashboard 四个能力大卡片（🎧/🔊/🎭/🎸）点击即跳对应能力页
 - **首页最近任务 SSE 实时刷新**：订阅 `job_status_changed`，状态变化即刻反映；10s 兜底轮询保留
 
+### Changed
+- **Vite bundle 拆包**：原 1.4MB 单 chunk → `index`(40KB 业务) / `react-vendor`(156KB) / `vendor`(366KB) / `semi`(886KB)；浏览器并发下载 + 缓存命中率↑；改动业务代码只失效 40KB index chunk
+- **GlobalJobsQueue 设置页**：过滤补齐 `cancelled` 选项；订阅 SSE `job_status_changed` / `job_progress` 实时刷新；加操作列（详情 / 重试 / 删除带 Popconfirm）；接入 `JobDetailsModal`
+- **SystemDiagnosis 设置页**：加 30s 周期刷新 health/models；订阅 SSE `model_loaded` / `model_unloaded` / `provider_failed` 实时响应
+
 ### Removed（死代码）
 - `api/schemas/asr.py`（`AsrResponse` / `AsrSegmentSchema`）——v0.1.3 异步化后无引用
 - `api/schemas/separate.py`（`SeparateResponse`）——同上

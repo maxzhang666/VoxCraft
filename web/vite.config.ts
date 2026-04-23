@@ -37,5 +37,27 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+    // Semi UI 整包 ~885kB 为第三方库固有体积（已独立 chunk，缓存命中率高），
+    // 按需引入属大规模重构超出当前范围——调大 warning 阈值消除无效告警。
+    chunkSizeWarningLimit: 1000,
+    // 拆包：Semi UI / React 生态 / 其他第三方分别独立 chunk
+    // 原因：单 chunk 1.4MB 导致首屏加载慢；拆后可并发下载 + 缓存命中率高
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("@douyinfe/")) return "semi";
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/react-router") ||
+            id.includes("/scheduler/")
+          ) {
+            return "react-vendor";
+          }
+          return "vendor";
+        },
+      },
+    },
   },
 });

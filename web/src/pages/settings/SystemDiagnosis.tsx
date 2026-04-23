@@ -1,8 +1,9 @@
 import { Card, Descriptions, Typography } from "@douyinfe/semi-ui";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { getHealth, getModels, type ModelsResponse } from "@/api/system";
 import { GpuGauge } from "@/components/GpuGauge";
+import { useSse } from "@/hooks/useSse";
 import { useSystem } from "@/stores/SystemContext";
 
 const { Title } = Typography;
@@ -12,10 +13,23 @@ export function SystemDiagnosis() {
   const [health, setHealth] = useState<{ status: string; db: boolean; gpu: boolean } | null>(null);
   const [models, setModels] = useState<ModelsResponse | null>(null);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     getHealth().then(setHealth).catch(() => undefined);
     getModels().then(setModels).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    refresh();
+    // 30s 周期刷新；面板停留期间保持数据新鲜
+    const id = setInterval(refresh, 30000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  // Provider 启停 / 模型加载完成时立即刷新（运维场景这类事件敏感）
+  useSse(
+    ["model_loaded", "model_unloaded", "provider_failed"],
+    refresh,
+  );
 
   return (
     <div>
