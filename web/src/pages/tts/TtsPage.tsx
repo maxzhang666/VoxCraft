@@ -6,7 +6,7 @@ import { CapabilityPageTemplate } from "@/components/CapabilityPageTemplate";
 import { JobCard } from "@/components/JobCard";
 import { JobDetailsModal } from "@/components/JobDetailsModal";
 import { TtsDrawer } from "@/drawers/TtsDrawer";
-import { useSse } from "@/hooks/useSse";
+import { useJobListStream } from "@/hooks/useJobListStream";
 import type { Job } from "@/types/api";
 
 export function TtsPage() {
@@ -26,10 +26,7 @@ export function TtsPage() {
     reload();
   }, [reload]);
 
-  useSse(["job_progress", "job_status_changed"], (ev) => {
-    const p = ev.payload as { kind?: string };
-    if (p.kind === "tts") reload();
-  });
+  useJobListStream("tts", reload, setJobs);
 
   const onDelete = async (id: string) => {
     await deleteJob(id);

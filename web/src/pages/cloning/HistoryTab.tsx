@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteJob, listJobs } from "@/api/jobs";
 import { JobCard } from "@/components/JobCard";
 import { JobDetailsModal } from "@/components/JobDetailsModal";
-import { useSse } from "@/hooks/useSse";
+import { useJobListStream } from "@/hooks/useJobListStream";
 import type { Job } from "@/types/api";
 import { t } from "@/i18n/zh-CN";
 
@@ -24,10 +24,7 @@ export function HistoryTab({ reloadKey }: { reloadKey: number }) {
     reload();
   }, [reload, reloadKey]);
 
-  useSse(["job_progress", "job_status_changed"], (ev) => {
-    const p = ev.payload as { kind?: string };
-    if (p.kind === "clone") reload();
-  });
+  useJobListStream("clone", reload, setJobs);
 
   const onDelete = async (id: string) => {
     await deleteJob(id);

@@ -16,6 +16,12 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - `test_pool_scheduler.py` 移除 `slow` mark（forkserver 下总耗时 <1s，无需排除）；进入默认 CI + coverage 统计
 - 覆盖率 **81.88%**（TOTAL），门槛 80% 保持
+- 4 个能力页 + cloning/HistoryTab：`useSse(["job_progress",...])` 抽成统一 `useJobListStream(kind, reload, setJobs)` hook
+- **JobCard 进度条真正跑动**：`job_progress` 事件内存更新单个 job 的 progress，不触发 HTTP reload（原先 per-segment 事件都会触发全列表请求，显著浪费）
+- `AsrProvider.transcribe` 接口新增 `progress_cb` 参数；Whisper 按 `segment.end / duration` 汇报；Mock 汇报 0.5 / 1.0
+
+### Investigated（未落地）
+- **Semi UI 按需引入**：尝试 Rollup `treeshake.moduleSideEffects` 配置，Semi 的 `index.js` re-export 所有组件导致无改善。真正减小需全面改为深路径 `import { X } from "@douyinfe/semi-ui/lib/es/x"` + 配套 CSS 深 import，20-30 处改动。留 v0.3+。当前 Semi 独立 chunk 886KB (gzip 238KB) 通过浏览器缓存摊销可接受。
 
 ## [v0.2.0] — 2026-04-23
 

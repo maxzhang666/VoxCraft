@@ -6,7 +6,7 @@ import { CapabilityPageTemplate } from "@/components/CapabilityPageTemplate";
 import { JobCard } from "@/components/JobCard";
 import { JobDetailsModal } from "@/components/JobDetailsModal";
 import { AsrDrawer } from "@/drawers/AsrDrawer";
-import { useSse } from "@/hooks/useSse";
+import { useJobListStream } from "@/hooks/useJobListStream";
 import type { Job } from "@/types/api";
 
 export function AsrPage() {
@@ -26,10 +26,7 @@ export function AsrPage() {
     reload();
   }, [reload]);
 
-  useSse(["job_progress", "job_status_changed"], (ev) => {
-    const payload = ev.payload as { kind?: string };
-    if (payload.kind === "asr") reload();
-  });
+  useJobListStream("asr", reload, setJobs);
 
   const onDelete = async (id: string) => {
     await deleteJob(id);
