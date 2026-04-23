@@ -21,6 +21,7 @@ dependencies = [
     "faster-whisper>=1.0",
     "piper-tts>=1.4.2",
     "modelscope>=1.36.1",
+    "openai>=1.50",
 ]
 
 [project.optional-dependencies]

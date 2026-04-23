@@ -84,3 +84,17 @@ class CatalogKeyConflictError(VoxCraftError):
     """自定义 key 冲突内置 catalog 或保留前缀。"""
     default_code = "CATALOG_KEY_CONFLICT"
     default_status = 400
+
+
+# --- LLM 接入（v0.3.0）---
+
+class LlmNotConfiguredError(VoxCraftError):
+    """未配置任何 LLM Provider，或指名 Provider 不存在。"""
+    default_code = "LLM_NOT_CONFIGURED"
+    default_status = 400
+
+
+class LlmApiError(VoxCraftError):
+    """LLM API 调用失败（网络 / 鉴权 / 模型不存在 / 等）。"""
+    default_code = "LLM_API_ERROR"
+    default_status = 502

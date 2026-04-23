@@ -161,3 +161,34 @@ export interface ProviderClassSchema {
   kind: ProviderKind;
   fields: ConfigFieldSchema[];
 }
+
+// ---------- LLM Provider（v0.3.0） ----------
+
+export interface LlmProvider {
+  id: number;
+  name: string;
+  base_url: string;
+  model: string;
+  is_default: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  // 注意：api_key 永不在响应中返回
+}
+
+export interface LlmProviderCreate {
+  name: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+  is_default?: boolean;
+  enabled?: boolean;
+}
+
+export interface LlmProviderUpdate {
+  base_url?: string;
+  api_key?: string; // 留空 = 保持原值
+  model?: string;
+  is_default?: boolean;
+  enabled?: boolean;
+}

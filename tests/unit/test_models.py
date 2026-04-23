@@ -49,13 +49,13 @@ def test_llm_provider_crud(session):
         LlmProvider(
             name="openai",
             base_url="https://api.openai.com/v1",
-            api_key_env="OPENAI_API_KEY",
+            api_key="sk-test-1234",
             model="gpt-4o-mini",
         )
     )
     session.commit()
     found = session.exec(select(LlmProvider)).first()
-    assert found.api_key_env == "OPENAI_API_KEY"
+    assert found.api_key == "sk-test-1234"
 
 
 def test_job_lifecycle(session):

@@ -35,9 +35,9 @@ class LlmProvider(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
-    base_url: str
-    api_key_env: str
-    model: str
+    base_url: str  # OpenAI 兼容端点，如 https://api.openai.com/v1
+    api_key: str  # 明文入库；自托管场景用户自行保护 data/voxcraft.sqlite
+    model: str  # 默认使用的模型名，如 gpt-4o-mini / deepseek-chat / qwen-turbo
     is_default: bool = Field(default=False)
     enabled: bool = Field(default=True)
     created_at: datetime = Field(default_factory=_utcnow)

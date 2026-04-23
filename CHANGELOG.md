@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0] — 2026-04-23
+
+### Added — LLM 接入基建
+- `/admin/llm` CRUD + `set-default`；独立 `api/admin_llm.py` 模块
+- `voxcraft.llm.LlmClient`：OpenAI 兼容同步客户端
+  - 构造：`LlmClient(base_url, api_key, model)`
+  - 工厂：`LlmClient.from_db(session, name=None)` 读默认或指名 Provider
+  - 核心：`chat(messages, model=None, **kw) -> str`
+  - 异常：`LlmApiError` / `LlmNotConfiguredError`
+  - `sk-*` 前缀 API Key 在日志/异常消息层面 redact（`voxcraft.llm.client.redact_sk`）
+- DB `LlmProvider`：`api_key_env` → `api_key` 明文入库（自托管场景，迁移 0005）
+- 前端 `pages/settings/LlmConfig.tsx` 实装 CRUD（参照 `ModelsManage` 模式）
+  - 表单字段化（不再 JSON TextArea）；Semi `Input mode="password"` 遮蔽输入
+  - 编辑态 api_key 字段留空 = 不更新；填值 = 覆盖
+- 依赖 `openai>=1.50`（加入 main deps）
+
+### Security
+- **API Key 明文存储于 `data/voxcraft.sqlite`**（自托管设计取舍，见 plans/voxcraft-llm-integration §风险）
+- README / LlmConfig 页面提示用户保护 DB 文件（`chmod 600` + 备份注意）
+
+### Documentation
+- README 加 "LLM 配置" 章节，列 OpenAI / DeepSeek / Qwen / Ollama 典型 base_url 示例
+- 05-api.md 补 `/admin/llm/*` 完整端点契约
+- 08-roadmap.md 加 v0.3.0 节点
+
+### Tests
+- 7 个 `test_admin_llm.py` 集成测试（CRUD / api_key 保护 / set-default 互斥）
+- 8 个 `test_llm_client.py` 单元测试（chat mock / from_db 两条路径 / redact）
+- 总计 **178 passed, 3 skipped**
+
+### 不做（YAGNI）
+- 探活端点（配置正确性靠首次调用反馈即可）
+- 非 OpenAI 协议 LLM（Anthropic Messages API 等）
+- Token 计量 / 缓存 / 速率限制 / Streaming / 多模型自动选择
+
 ## [Unreleased]
 
 ### Added — SSE 进度桥接

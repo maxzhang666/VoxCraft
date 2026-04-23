@@ -64,6 +64,19 @@ audio.stream_to_file("out.mp3")
 
 Clone / Separate 不在 OpenAI 标准内，请用 VoxCraft 原生异步端点。详见 [ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md)。
 
+### LLM 配置（v0.3.0 起）
+
+翻译 / 摘要 / 字幕润色等文字能力由外部 LLM API 驱动。在设置 → LLM 配置页新增端点（支持任何 OpenAI 兼容协议）：
+
+| 场景 | Base URL | 示例 Model |
+|------|----------|-----------|
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| Qwen（阿里云） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` |
+| 本地 Ollama | `http://localhost:11434/v1` | `qwen2.5:7b` |
+
+**安全提示**：API Key **明文存储于 `data/voxcraft.sqlite`**（自托管场景简化设计）。请自行保护数据库文件：`chmod 600 data/voxcraft.sqlite`，备份也注意不上传到公共位置。
+
 ## 部署（Docker）
 
 ### 前置
