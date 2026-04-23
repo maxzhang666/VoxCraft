@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from voxcraft.api import admin, business, events, health, jobs, models_library
+from voxcraft.api import admin, business, events, health, jobs, models_library, oai_compat
 from voxcraft.api.error_handlers import register_error_handlers
 from voxcraft.config import get_settings
 from voxcraft.db.bootstrap import scan_existing_models, seed_default_providers
@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(business.router)
     app.include_router(events.router)
     app.include_router(models_library.router)
+    app.include_router(oai_compat.router)
 
     if _STATIC_DIR.exists():
         app.mount("/ui", StaticFiles(directory=_STATIC_DIR, html=True), name="ui")

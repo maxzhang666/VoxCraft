@@ -35,6 +35,35 @@ POST /asr | /tts | /tts/clone | /separate
 
 详见 [ADR-011](docs/superpowers/specs/voxcraft/decisions/ADR-011-async-by-default.md) 与 [05-api.md](docs/superpowers/specs/voxcraft/05-api.md)。
 
+### OpenAI 兼容 API（v0.1.4 起）
+
+无状态客户端（CLI、SDK、AI 编排工具）可直接用 OpenAI 协议访问 ASR / TTS：
+
+```http
+POST /v1/audio/transcriptions   # 对齐 OpenAI Whisper
+POST /v1/audio/speech           # 对齐 OpenAI TTS
+```
+
+HTTP 层同步返回（内核仍异步；入口等到 Job 终态再回包），默认超时 10 分钟。每个响应带 `X-VoxCraft-Job-Id` 头便于追溯。
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://voxcraft.local:8001/v1", api_key="sk-local")
+
+# ASR（多种 response_format：json / text / srt / vtt / verbose_json）
+with open("sample.mp3", "rb") as f:
+    r = client.audio.transcriptions.create(model="whisper-1", file=f)
+    print(r.text)
+
+# TTS
+audio = client.audio.speech.create(model="tts-1", voice="alloy", input="你好")
+audio.stream_to_file("out.mp3")
+```
+
+错误响应走 OpenAI envelope：`{"error": {"message", "type", "code"}}`。
+
+Clone / Separate 不在 OpenAI 标准内，请用 VoxCraft 原生异步端点。详见 [ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md)。
+
 ## 部署（Docker）
 
 ### 前置

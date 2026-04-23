@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.1.4] — 2026-04-23
+
+### Added — OpenAI 兼容 API 层（[ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md)）
+- `POST /v1/audio/transcriptions` 对齐 OpenAI Whisper API；支持 `response_format` ∈ `{json, text, srt, vtt, verbose_json}`
+- `POST /v1/audio/speech` 对齐 OpenAI TTS API；支持 `response_format` ∈ `{mp3, opus, aac, flac, wav, pcm}`
+- 请求校验错误走 OpenAI error envelope `{error:{message,type,code}}`，不再返回 VoxCraft 默认 `{error:{code,message,details}}`（仅限 `/v1/audio/*` 路径）
+- 所有响应带 `X-VoxCraft-Job-Id` 头便于追溯
+- 入口层同步（内核仍 ADR-011 异步）：等到 Job 终态回包，默认 10 分钟超时；超时不中断后台任务
+
+### 不影响
+- 现有 `/asr` `/tts` `/tts/clone` `/separate` 异步端点（UI 与 SSE 场景继续使用）
+- 异步 runner、Job 表结构、SSE 事件
+
+### Tests
+- 150 passed, 3 skipped（含 `test_oai_compat.py` 新增 12 个用例）
+
 ## [v0.1.3] — 2026-04-23
 
 ### Changed — Breaking
