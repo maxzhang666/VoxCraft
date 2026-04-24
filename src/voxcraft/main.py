@@ -6,7 +6,7 @@ from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from voxcraft.api import (
@@ -105,7 +105,27 @@ def create_app() -> FastAPI:
     app.include_router(oai_compat.router)
 
     if _STATIC_DIR.exists():
-        app.mount("/ui", StaticFiles(directory=_STATIC_DIR, html=True), name="ui")
+        # 哈希命名资源走 StaticFiles（强缓存），其他 /ui/* 落到通用 handler：
+        # - 真实存在的文件（public/ 里的 icon 等）正常返回
+        # - 其他路径（SPA deep-link 刷新、未知路径）返回 index.html 让前端 Router 接管
+        assets_dir = _STATIC_DIR / "assets"
+        if assets_dir.exists():
+            app.mount(
+                "/ui/assets",
+                StaticFiles(directory=assets_dir),
+                name="ui-assets",
+            )
+
+        _index_html = _STATIC_DIR / "index.html"
+
+        @app.get("/ui", include_in_schema=False)
+        @app.get("/ui/{full_path:path}", include_in_schema=False)
+        async def _spa(full_path: str = ""):
+            if full_path:
+                candidate = _STATIC_DIR / full_path
+                if candidate.is_file():
+                    return FileResponse(candidate)
+            return FileResponse(_index_html)
 
         @app.get("/", include_in_schema=False)
         def _root():

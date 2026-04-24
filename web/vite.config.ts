@@ -7,7 +7,14 @@ const BACKEND = process.env.VITE_BACKEND_URL || "http://localhost:8001";
 
 // 后端业务 API 统一 /api 前缀，不与前端 SPA 路由（/asr /tts 等）冲突。
 // /v1/* 是 OpenAI 兼容层规范路径，独立代理。
-export default defineConfig({
+//
+// base 策略：
+//   build（生产）→ "/ui/"，产物里的 <link>/<script> 引用 /ui/assets/...，
+//                  与 FastAPI `app.mount("/ui", StaticFiles(...))` 对齐
+//   serve（dev）  → "/"，localhost:5173 根路径直接访问不加前缀
+// Router 通过 import.meta.env.BASE_URL 取用相同 base 做 basename。
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "/ui/" : "/",
   plugins: [react()],
   resolve: {
     alias: { "@": path.resolve(__dirname, "src") },
@@ -53,4 +60,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
