@@ -293,7 +293,7 @@ async def submit_video_translate(
     # ---------- 所有验证通过，落盘 + 写 Job ----------
 
     job_id = str(uuid.uuid4())
-    source_path = _save_upload_with_size_check(
+    source_path, source_size = _save_upload_with_size_check(
         source_file, job_id, ext, settings.max_upload_size,
     )
 
@@ -307,6 +307,7 @@ async def submit_video_translate(
 
     request_meta: dict = {
         "source_filename": source_file.filename,
+        "source_size_bytes": source_size,
         "source_is_video": is_video_input,
         "target_lang": target_lang,
         "source_lang": source_lang,
@@ -497,8 +498,11 @@ def _pick_llm(session: Session, *, explicit_id: int | None) -> LlmProvider:
 
 def _save_upload_with_size_check(
     upload: UploadFile, job_id: str, ext: str, limit: int,
-) -> Path:
-    """写盘时逐块累计大小；超限立即删除半成品 + 抛错。"""
+) -> tuple[Path, int]:
+    """写盘时逐块累计大小；超限立即删除半成品 + 抛错。
+
+    返回 (dest_path, total_size_bytes)，供调用方写入 Job.request.source_size_bytes。
+    """
     dest = _uploads_dir() / f"{job_id}{ext}"
     total = 0
     try:
@@ -528,4 +532,4 @@ def _save_upload_with_size_check(
             except OSError:
                 pass
         raise
-    return dest
+    return dest, total

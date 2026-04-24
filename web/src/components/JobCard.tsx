@@ -5,6 +5,7 @@ import "dayjs/locale/zh-cn";
 
 import type { Job } from "@/types/api";
 import { jobOutputUrl, jobPreviewUrl, retryJob } from "@/api/jobs";
+import { JobBadges } from "./JobBadges";
 import { StatusTag } from "./StatusTag";
 
 dayjs.extend(relativeTime);
@@ -159,6 +160,8 @@ export function JobCard(props: Props) {
           {dayjs(job.created_at).fromNow()}
         </Text>
       </div>
+
+      <JobBadges job={job} />
 
       {job.status === "running" && (
         <Progress

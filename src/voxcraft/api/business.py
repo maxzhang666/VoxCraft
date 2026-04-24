@@ -72,12 +72,15 @@ def _outputs_dir() -> Path:
     return d
 
 
-def _save_upload(upload: UploadFile, job_id: str, suffix_hint: str = ".bin") -> Path:
+def _save_upload(
+    upload: UploadFile, job_id: str, suffix_hint: str = ".bin",
+) -> tuple[Path, int]:
+    """返回 (dest_path, size_bytes)，供调用方写入 Job.request.source_size_bytes。"""
     suffix = Path(upload.filename or "upload").suffix or suffix_hint
     dest = _uploads_dir() / f"{job_id}{suffix}"
-    with dest.open("wb") as f:
-        f.write(upload.file.read())
-    return dest
+    data = upload.file.read()
+    dest.write_bytes(data)
+    return dest, len(data)
 
 
 async def _publish_status(
@@ -108,14 +111,18 @@ async def submit_asr(
 ) -> JobSubmitResponse:
     p_row = _select_provider(session, kind="asr", name=provider)
     job_id = str(uuid.uuid4())
-    source_path = _save_upload(audio, job_id, ".wav")
+    source_path, source_size = _save_upload(audio, job_id, ".wav")
     now = datetime.now(UTC)
 
     session.add(
         Job(
             id=job_id, kind="asr", status="pending",
             provider_name=p_row.name,
-            request={"source_filename": audio.filename, "language": language},
+            request={
+                "source_filename": audio.filename,
+                "source_size_bytes": source_size,
+                "language": language,
+            },
             source_path=str(source_path),
             progress=0.0, created_at=now,
         )
@@ -170,7 +177,7 @@ async def submit_clone(
 ) -> JobSubmitResponse:
     p_row = _select_provider(session, kind="cloning", name=provider)
     job_id = str(uuid.uuid4())
-    source_path = _save_upload(reference_audio, job_id, ".wav")
+    source_path, source_size = _save_upload(reference_audio, job_id, ".wav")
     now = datetime.now(UTC)
 
     session.add(
@@ -181,6 +188,7 @@ async def submit_clone(
                 "text": text,
                 "speaker_name": speaker_name,
                 "reference_filename": reference_audio.filename,
+                "source_size_bytes": source_size,
             },
             source_path=str(source_path),
             progress=0.0, created_at=now,
@@ -203,14 +211,17 @@ async def submit_separate(
 ) -> JobSubmitResponse:
     p_row = _select_provider(session, kind="separator", name=provider)
     job_id = str(uuid.uuid4())
-    source_path = _save_upload(audio, job_id, ".wav")
+    source_path, source_size = _save_upload(audio, job_id, ".wav")
     now = datetime.now(UTC)
 
     session.add(
         Job(
             id=job_id, kind="separate", status="pending",
             provider_name=p_row.name,
-            request={"source_filename": audio.filename},
+            request={
+                "source_filename": audio.filename,
+                "source_size_bytes": source_size,
+            },
             source_path=str(source_path),
             progress=0.0, created_at=now,
         )
@@ -405,8 +416,27 @@ async def _finalize_success(
             if isinstance(warns, list) and warns:
                 j.warnings = list(warns)
 
+        # 产物大小：main + extras（用于前端 badge 直接显示，避免额外 HEAD 请求）
+        artifact_sizes: dict[str, int] = {}
+        paths: dict[str, str] = {}
+        if result.output_extras:
+            paths.update({k: v for k, v in result.output_extras.items() if v})
+        if result.output_path and result.output_path not in paths.values():
+            paths["main"] = result.output_path
+        for k, p in paths.items():
+            try:
+                artifact_sizes[k] = Path(p).stat().st_size
+            except OSError:
+                pass
+
+        merged_result: dict | None = None
+        if result.result is not None or artifact_sizes:
+            merged_result = dict(result.result or {})
+            if artifact_sizes:
+                merged_result["artifact_sizes"] = artifact_sizes
+
         j.status = "succeeded"
-        j.result = result.result
+        j.result = merged_result
         j.output_path = result.output_path
         j.output_extras = result.output_extras
         j.progress = 1.0
