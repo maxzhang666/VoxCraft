@@ -31,6 +31,23 @@ class LlmProviderUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class ProbeModelsRequest(BaseModel):
+    """拉取 OpenAI 兼容端点的可用模型列表。
+
+    鉴权来源二选一（至少一个）：
+    - 直接传 `api_key`（新建场景：用户已填 API Key 但未保存）
+    - 传 `use_id`：用该 Provider 在 DB 的 api_key（编辑场景：不暴露已存 key）
+    """
+
+    base_url: str = Field(min_length=1)
+    api_key: str | None = None
+    use_id: int | None = None
+
+
+class ProbeModelsResponse(BaseModel):
+    models: list[str]
+
+
 class LlmProviderResponse(BaseModel):
     """Response 刻意不声明 `api_key` 字段——即使 DB 行有，序列化时自动省略。"""
 

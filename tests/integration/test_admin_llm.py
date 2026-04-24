@@ -83,6 +83,82 @@ def test_llm_not_found_errors(client):
     assert r2.json()["error"]["code"] == "LLM_PROVIDER_NOT_FOUND"
 
 
+def test_probe_models_with_explicit_api_key(client, monkeypatch):
+    """新建场景：api_key + base_url 调 probe-models。"""
+    _patch_openai_models(monkeypatch, ids=["gpt-4o", "gpt-4o-mini"])
+    r = client.post(
+        "/admin/llm/probe-models",
+        json={"base_url": "https://api.openai.com/v1", "api_key": "sk-new"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"models": ["gpt-4o", "gpt-4o-mini"]}
+
+
+def test_probe_models_with_use_id(client, monkeypatch):
+    """编辑场景：不暴露 api_key，只传 use_id。"""
+    created = _create(client, api_key="sk-stored")
+    _patch_openai_models(monkeypatch, ids=["deepseek-chat"])
+
+    r = client.post(
+        "/admin/llm/probe-models",
+        json={"base_url": "https://api.deepseek.com/v1", "use_id": created["id"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["models"] == ["deepseek-chat"]
+
+
+def test_probe_models_use_id_not_found(client):
+    r = client.post(
+        "/admin/llm/probe-models",
+        json={"base_url": "https://x", "use_id": 99999},
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "LLM_PROVIDER_NOT_FOUND"
+
+
+def test_probe_models_requires_auth(client):
+    # 既无 api_key 也无 use_id
+    r = client.post("/admin/llm/probe-models", json={"base_url": "https://x"})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_probe_models_upstream_failure(client, monkeypatch):
+    _patch_openai_models(
+        monkeypatch, raise_exc=RuntimeError("401 Unauthorized"),
+    )
+    r = client.post(
+        "/admin/llm/probe-models",
+        json={"base_url": "https://x", "api_key": "sk-bad"},
+    )
+    assert r.status_code == 502
+    assert r.json()["error"]["code"] == "LLM_API_ERROR"
+
+
+# ---------- helper：patch openai SDK 的 models.list ----------
+
+def _patch_openai_models(monkeypatch, *, ids=None, raise_exc=None):
+    from types import SimpleNamespace
+    import openai
+    from voxcraft.llm import client as client_mod
+
+    class _Models:
+        def list(self):
+            if raise_exc is not None:
+                raise raise_exc
+            return SimpleNamespace(
+                data=[SimpleNamespace(id=i) for i in (ids or [])]
+            )
+
+    class _OpenAI:
+        def __init__(self, base_url, api_key, timeout):  # noqa: ARG002
+            self.chat = SimpleNamespace(completions=SimpleNamespace())
+            self.models = _Models()
+
+    monkeypatch.setattr(openai, "OpenAI", _OpenAI)
+    monkeypatch.setattr(client_mod, "OpenAI", _OpenAI, raising=False)
+
+
 def test_llm_name_validation(client):
     r = client.post("/admin/llm", json={
         "name": "Has Space",

@@ -18,3 +18,14 @@ export const deleteLlm = (id: number) => api.delete(`/admin/llm/${id}`);
 
 export const setDefaultLlm = (id: number) =>
   api.post<LlmProvider>(`/admin/llm/${id}/set-default`).then((r) => r.data);
+
+export interface ProbeModelsRequest {
+  base_url: string;
+  api_key?: string;
+  use_id?: number;
+}
+
+export const probeLlmModels = (body: ProbeModelsRequest) =>
+  api
+    .post<{ models: string[] }>("/admin/llm/probe-models", body)
+    .then((r) => r.data.models);

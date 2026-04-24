@@ -23,10 +23,13 @@ from voxcraft.api.schemas.llm import (
     LlmProviderCreate,
     LlmProviderResponse,
     LlmProviderUpdate,
+    ProbeModelsRequest,
+    ProbeModelsResponse,
 )
 from voxcraft.db.engine import get_engine
 from voxcraft.db.models import LlmProvider
 from voxcraft.errors import ValidationError, VoxCraftError
+from voxcraft.llm.client import LlmClient
 
 
 router = APIRouter(prefix="/admin/llm", tags=["admin-llm"])
@@ -92,6 +95,33 @@ def delete_llm(id: int, session: Session = Depends(get_session)) -> None:
         raise _not_found(id)
     session.delete(row)
     session.commit()
+
+
+@router.post("/probe-models", response_model=ProbeModelsResponse)
+def probe_models(
+    body: ProbeModelsRequest, session: Session = Depends(get_session),
+) -> ProbeModelsResponse:
+    """拉取 OpenAI 兼容端点的可用模型列表，驱动前端 Model 下拉。
+
+    鉴权：`api_key` 优先；否则用 `use_id` 指向 Provider 的已存 api_key。
+    """
+    api_key = (body.api_key or "").strip()
+    if not api_key:
+        if body.use_id is None:
+            raise ValidationError(
+                "api_key or use_id required",
+                details={"field": "api_key"},
+            )
+        row = session.get(LlmProvider, body.use_id)
+        if row is None:
+            raise _not_found(body.use_id)
+        api_key = row.api_key
+    # 10s 超时足够大多数 /v1/models 调用；不可配置以保持端点简洁
+    client = LlmClient(
+        base_url=body.base_url, api_key=api_key, model="", timeout=10.0,
+    )
+    models = client.list_models()
+    return ProbeModelsResponse(models=models)
 
 
 @router.post("/{id}/set-default", response_model=LlmProviderResponse)

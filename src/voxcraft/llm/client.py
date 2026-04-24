@@ -97,6 +97,27 @@ class LlmClient:
             )
         return self._client
 
+    def list_models(self) -> list[str]:
+        """调用 OpenAI 兼容 `GET /v1/models`，返回模型 id 列表（已排序）。
+
+        异常统一转 `LlmApiError`，消息经 sk-* redact。
+        """
+        cli = self._ensure_client()
+        try:
+            resp = cli.models.list()
+        except BaseException as e:  # noqa: BLE001
+            msg = redact_sk(f"{type(e).__name__}: {e}")
+            raise LlmApiError(
+                f"LLM list_models failed: {msg}",
+                details={"base_url": self.base_url},
+            ) from None
+        ids: list[str] = []
+        for item in getattr(resp, "data", []) or []:
+            mid = getattr(item, "id", None)
+            if isinstance(mid, str) and mid:
+                ids.append(mid)
+        return sorted(ids)
+
     def chat(
         self,
         messages: list[dict],

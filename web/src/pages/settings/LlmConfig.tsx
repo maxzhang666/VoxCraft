@@ -1,4 +1,5 @@
 import {
+  AutoComplete,
   Button,
   Form,
   Input,
@@ -11,12 +12,14 @@ import {
   Toast,
   Typography,
 } from "@douyinfe/semi-ui";
+import { IconRefresh } from "@douyinfe/semi-icons";
 import { useCallback, useEffect, useState } from "react";
 
 import {
   createLlm,
   deleteLlm,
   listLlms,
+  probeLlmModels,
   setDefaultLlm,
   updateLlm,
 } from "@/api/llm";
@@ -46,6 +49,8 @@ export function LlmConfig() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<LlmProvider | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [probing, setProbing] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -63,6 +68,7 @@ export function LlmConfig() {
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY);
+    setModelOptions([]);
     setModalOpen(true);
   };
 
@@ -76,7 +82,40 @@ export function LlmConfig() {
       model: p.model,
       enabled: p.enabled,
     });
+    // 已存 model 作为初始下拉项（用户点获取前也能正常编辑）
+    setModelOptions(p.model ? [p.model] : []);
     setModalOpen(true);
+  };
+
+  const onProbeModels = async () => {
+    if (!form.base_url) {
+      Toast.warning("请先填写 Base URL");
+      return;
+    }
+    // 编辑态留空 api_key → 用已存；否则用当前输入
+    const useSaved = !!editing && !form.api_key;
+    if (!editing && !form.api_key) {
+      Toast.warning("新建时请先填写 API Key");
+      return;
+    }
+    setProbing(true);
+    try {
+      const models = await probeLlmModels({
+        base_url: form.base_url,
+        api_key: useSaved ? undefined : form.api_key,
+        use_id: useSaved ? editing!.id : undefined,
+      });
+      setModelOptions(models);
+      if (models.length === 0) {
+        Toast.info("端点返回空模型列表");
+      } else {
+        Toast.success(`获取到 ${models.length} 个模型`);
+      }
+    } catch {
+      // 拦截器已提示
+    } finally {
+      setProbing(false);
+    }
   };
 
   const onSubmit = async () => {
@@ -236,11 +275,33 @@ export function LlmConfig() {
             />
           </Form.Slot>
           <Form.Slot label="Model">
-            <Input
-              value={form.model}
-              onChange={(v) => setForm((f) => ({ ...f, model: v }))}
-              placeholder="gpt-4o-mini / deepseek-chat / qwen-turbo / ..."
-            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <AutoComplete
+                value={form.model}
+                onChange={(v) => setForm((f) => ({ ...f, model: String(v) }))}
+                onSelect={(v) => setForm((f) => ({ ...f, model: String(v) }))}
+                data={modelOptions}
+                placeholder="gpt-4o-mini / deepseek-chat / qwen-turbo / ..."
+                style={{ flex: 1 }}
+                emptyContent={
+                  <div style={{ padding: 8, color: "var(--vc-color-text-secondary)" }}>
+                    点击右侧获取按钮拉取
+                  </div>
+                }
+              />
+              <Button
+                icon={<IconRefresh />}
+                onClick={onProbeModels}
+                loading={probing}
+                title={
+                  editing
+                    ? "获取模型列表（留空 API Key 时使用已存 Key）"
+                    : "获取模型列表（先填 Base URL + API Key）"
+                }
+              >
+                获取
+              </Button>
+            </div>
           </Form.Slot>
           <Form.Slot label="启用">
             <Switch

@@ -36,16 +36,43 @@ class _StubChatCompletions:
         return SimpleNamespace(choices=[choice])
 
 
+class _StubModels:
+    """OpenAI SDK models.list 的 mock。"""
+
+    def __init__(
+        self,
+        ids: list[str] | None = None,
+        raise_exc: Exception | None = None,
+    ) -> None:
+        self._ids = ids or []
+        self._raise = raise_exc
+
+    def list(self):
+        if self._raise is not None:
+            raise self._raise
+        data = [SimpleNamespace(id=i) for i in self._ids]
+        return SimpleNamespace(data=data)
+
+
 class _StubOpenAI:
-    def __init__(self, stub: _StubChatCompletions):
-        self.chat = SimpleNamespace(completions=stub)
+    def __init__(
+        self,
+        chat_stub: _StubChatCompletions | None = None,
+        models_stub: _StubModels | None = None,
+    ):
+        self.chat = SimpleNamespace(completions=chat_stub or _StubChatCompletions())
+        self.models = models_stub or _StubModels()
 
 
-def _patch_openai(monkeypatch, stub: _StubChatCompletions) -> None:
+def _patch_openai(
+    monkeypatch,
+    chat_stub: _StubChatCompletions | None = None,
+    models_stub: _StubModels | None = None,
+) -> None:
     from voxcraft.llm import client as client_mod
 
     def factory(base_url, api_key, timeout):  # noqa: ARG001
-        return _StubOpenAI(stub)
+        return _StubOpenAI(chat_stub, models_stub)
 
     monkeypatch.setattr(client_mod, "OpenAI", factory, raising=False)
     # _ensure_client 里 `from openai import OpenAI`——替换该模块里的 OpenAI 即可
@@ -55,7 +82,7 @@ def _patch_openai(monkeypatch, stub: _StubChatCompletions) -> None:
 
 def test_chat_calls_openai_and_returns_content(monkeypatch):
     stub = _StubChatCompletions(text="你好，世界")
-    _patch_openai(monkeypatch, stub)
+    _patch_openai(monkeypatch, chat_stub=stub)
 
     c = LlmClient(base_url="http://x", api_key="sk-test", model="gpt-4o-mini")
     r = c.chat([{"role": "user", "content": "hi"}], temperature=0.2)
@@ -67,7 +94,7 @@ def test_chat_calls_openai_and_returns_content(monkeypatch):
 
 def test_chat_model_override(monkeypatch):
     stub = _StubChatCompletions()
-    _patch_openai(monkeypatch, stub)
+    _patch_openai(monkeypatch, chat_stub=stub)
     c = LlmClient(base_url="http://x", api_key="sk", model="default-m")
     c.chat([{"role": "user", "content": "hi"}], model="override-m")
     assert stub.last_kwargs["model"] == "override-m"
@@ -75,7 +102,7 @@ def test_chat_model_override(monkeypatch):
 
 def test_chat_wraps_exception_as_llm_api_error(monkeypatch):
     stub = _StubChatCompletions(raise_exc=RuntimeError("boom sk-leaked-abcdef"))
-    _patch_openai(monkeypatch, stub)
+    _patch_openai(monkeypatch, chat_stub=stub)
     c = LlmClient(base_url="http://x", api_key="sk", model="m")
     with pytest.raises(LlmApiError) as ei:
         c.chat([{"role": "user", "content": "hi"}])
@@ -132,6 +159,35 @@ def test_from_db_missing_raises(session):
         LlmClient.from_db(session)
     with pytest.raises(LlmNotConfiguredError):
         LlmClient.from_db(session, name="ghost")
+
+
+def test_list_models_returns_sorted_ids(monkeypatch):
+    stub = _StubModels(ids=["gpt-4o", "gpt-4o-mini", "text-embedding-3-small"])
+    _patch_openai(monkeypatch, models_stub=stub)
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    assert c.list_models() == [
+        "gpt-4o", "gpt-4o-mini", "text-embedding-3-small",
+    ]
+
+
+def test_list_models_filters_non_string_ids(monkeypatch):
+    stub = _StubModels(ids=["a"])
+    # 混入一个没有 id 的条目
+    stub._ids = ["a", "b"]
+    _patch_openai(monkeypatch, models_stub=stub)
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    out = c.list_models()
+    assert "a" in out and "b" in out
+
+
+def test_list_models_wraps_exception_and_redacts(monkeypatch):
+    stub = _StubModels(raise_exc=RuntimeError("401 with sk-leaked-abcdef"))
+    _patch_openai(monkeypatch, models_stub=stub)
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    with pytest.raises(LlmApiError) as ei:
+        c.list_models()
+    assert "sk-leaked" not in ei.value.message
+    assert "REDACTED" in ei.value.message
 
 
 def test_redact_sk_helper():
