@@ -34,6 +34,31 @@ def redact_sk(text: str) -> str:
     return _SK_PATTERN.sub("sk-***REDACTED***", text)
 
 
+def _extract_model_ids(payload: Any) -> list[str]:
+    """从各种 /models 响应格式里柔性抽出 id 字符串列表。"""
+    out: list[str] = []
+    if not isinstance(payload, dict):
+        return out
+
+    # 主流字段名候选
+    items = payload.get("data") or payload.get("models") or []
+    if not isinstance(items, list):
+        return out
+
+    for it in items:
+        if isinstance(it, str):
+            if it.strip():
+                out.append(it.strip())
+        elif isinstance(it, dict):
+            # OpenAI 标准：id；部分兼容层：name / model
+            for key in ("id", "name", "model"):
+                v = it.get(key)
+                if isinstance(v, str) and v.strip():
+                    out.append(v.strip())
+                    break
+    return out
+
+
 class LlmClient:
     """OpenAI 兼容 API 的同步客户端。
 
@@ -100,23 +125,37 @@ class LlmClient:
     def list_models(self) -> list[str]:
         """调用 OpenAI 兼容 `GET /v1/models`，返回模型 id 列表（已排序）。
 
+        不用 openai SDK —— SDK 会用 Pydantic 严格反序列化，遇到 Ollama / vllm /
+        部分 Azure 定制等返回非标准结构（如 data 是 string[] 而非 object[]）就报
+        `'str' object has no attribute '_set_private_attributes'`。
+
+        这里用 httpx 直 GET 然后柔性解析，兼容：
+        - 标准：`{data: [{id: "..."}]}` （OpenAI）
+        - 对象含 name 而非 id：`{data: [{name: "..."}]}` （部分兼容层）
+        - 字符串列表：`{data: ["m1", "m2"]}` 或 `{models: ["m1"]}`
+
         异常统一转 `LlmApiError`，消息经 sk-* redact。
         """
-        cli = self._ensure_client()
+        import httpx
+
+        url = self.base_url.rstrip("/") + "/models"
         try:
-            resp = cli.models.list()
+            r = httpx.get(
+                url,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+            data = r.json()
         except BaseException as e:  # noqa: BLE001
             msg = redact_sk(f"{type(e).__name__}: {e}")
             raise LlmApiError(
                 f"LLM list_models failed: {msg}",
                 details={"base_url": self.base_url},
             ) from None
-        ids: list[str] = []
-        for item in getattr(resp, "data", []) or []:
-            mid = getattr(item, "id", None)
-            if isinstance(mid, str) and mid:
-                ids.append(mid)
-        return sorted(ids)
+
+        ids = _extract_model_ids(data)
+        return sorted(set(ids))
 
     def chat(
         self,

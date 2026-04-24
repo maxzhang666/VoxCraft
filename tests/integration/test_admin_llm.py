@@ -135,28 +135,21 @@ def test_probe_models_upstream_failure(client, monkeypatch):
     assert r.json()["error"]["code"] == "LLM_API_ERROR"
 
 
-# ---------- helper：patch openai SDK 的 models.list ----------
+# ---------- helper：mock httpx.get（list_models 已改走 httpx 直调） ----------
 
 def _patch_openai_models(monkeypatch, *, ids=None, raise_exc=None):
-    from types import SimpleNamespace
-    import openai
-    from voxcraft.llm import client as client_mod
+    import httpx
 
-    class _Models:
-        def list(self):
-            if raise_exc is not None:
-                raise raise_exc
-            return SimpleNamespace(
-                data=[SimpleNamespace(id=i) for i in (ids or [])]
-            )
+    def fake_get(url, headers=None, timeout=None):  # noqa: ARG001
+        if raise_exc is not None:
+            raise raise_exc
+        return httpx.Response(
+            200,
+            json={"data": [{"id": i} for i in (ids or [])]},
+            request=httpx.Request("GET", url),
+        )
 
-    class _OpenAI:
-        def __init__(self, base_url, api_key, timeout):  # noqa: ARG002
-            self.chat = SimpleNamespace(completions=SimpleNamespace())
-            self.models = _Models()
-
-    monkeypatch.setattr(openai, "OpenAI", _OpenAI)
-    monkeypatch.setattr(client_mod, "OpenAI", _OpenAI, raising=False)
+    monkeypatch.setattr(httpx, "get", fake_get)
 
 
 def test_llm_name_validation(client):

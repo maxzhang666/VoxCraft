@@ -161,28 +161,65 @@ def test_from_db_missing_raises(session):
         LlmClient.from_db(session, name="ghost")
 
 
-def test_list_models_returns_sorted_ids(monkeypatch):
-    stub = _StubModels(ids=["gpt-4o", "gpt-4o-mini", "text-embedding-3-small"])
-    _patch_openai(monkeypatch, models_stub=stub)
-    c = LlmClient(base_url="http://x", api_key="sk", model="m")
-    assert c.list_models() == [
-        "gpt-4o", "gpt-4o-mini", "text-embedding-3-small",
-    ]
+def _patch_httpx_get(monkeypatch, *, json_payload=None, status=200, raise_exc=None):
+    """mock httpx.get（新版 list_models 用 httpx 直调，不走 openai SDK）。"""
+    import httpx
+
+    def fake_get(url, headers=None, timeout=None):  # noqa: ARG001
+        if raise_exc is not None:
+            raise raise_exc
+        return httpx.Response(
+            status,
+            json=json_payload if json_payload is not None else {},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
 
 
-def test_list_models_filters_non_string_ids(monkeypatch):
-    stub = _StubModels(ids=["a"])
-    # 混入一个没有 id 的条目
-    stub._ids = ["a", "b"]
-    _patch_openai(monkeypatch, models_stub=stub)
+def test_list_models_parses_openai_standard(monkeypatch):
+    _patch_httpx_get(monkeypatch, json_payload={
+        "object": "list",
+        "data": [
+            {"id": "gpt-4o", "object": "model"},
+            {"id": "gpt-4o-mini", "object": "model"},
+        ],
+    })
     c = LlmClient(base_url="http://x", api_key="sk", model="m")
-    out = c.list_models()
-    assert "a" in out and "b" in out
+    assert c.list_models() == ["gpt-4o", "gpt-4o-mini"]
+
+
+def test_list_models_parses_string_list(monkeypatch):
+    """部分非标实现返回 data=['id1','id2']，不应崩。"""
+    _patch_httpx_get(monkeypatch, json_payload={
+        "data": ["llama3:8b", "qwen2.5:7b"],
+    })
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    assert c.list_models() == ["llama3:8b", "qwen2.5:7b"]
+
+
+def test_list_models_parses_name_field(monkeypatch):
+    """有些兼容层用 name 而非 id。"""
+    _patch_httpx_get(monkeypatch, json_payload={
+        "data": [{"name": "mistral-7b"}, {"name": "codellama"}],
+    })
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    assert c.list_models() == ["codellama", "mistral-7b"]
+
+
+def test_list_models_parses_models_key(monkeypatch):
+    """响应用 `models` 字段而非 `data`。"""
+    _patch_httpx_get(monkeypatch, json_payload={
+        "models": ["a", "b", "a"],  # 去重
+    })
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    assert c.list_models() == ["a", "b"]
 
 
 def test_list_models_wraps_exception_and_redacts(monkeypatch):
-    stub = _StubModels(raise_exc=RuntimeError("401 with sk-leaked-abcdef"))
-    _patch_openai(monkeypatch, models_stub=stub)
+    _patch_httpx_get(
+        monkeypatch, raise_exc=RuntimeError("401 with sk-leaked-abcdef"),
+    )
     c = LlmClient(base_url="http://x", api_key="sk", model="m")
     with pytest.raises(LlmApiError) as ei:
         c.list_models()
