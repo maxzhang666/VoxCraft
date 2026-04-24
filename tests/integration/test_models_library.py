@@ -27,7 +27,7 @@ def patch_downloader(monkeypatch):
 def _wait_ready(client, model_id: int, timeout_s: float = 3.0):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        r = client.get("/admin/models-library").json()
+        r = client.get("/api/admin/models-library").json()
         for v in r:
             if v.get("model_id") == model_id and v["status"] in ("ready", "failed", "cancelled"):
                 return v
@@ -36,7 +36,7 @@ def _wait_ready(client, model_id: int, timeout_s: float = 3.0):
 
 
 def test_list_returns_11_builtin_entries(client):
-    r = client.get("/admin/models-library")
+    r = client.get("/api/admin/models-library")
     assert r.status_code == 200
     data = r.json()
     builtins = [v for v in data if v["is_builtin"]]
@@ -51,7 +51,7 @@ def test_list_returns_11_builtin_entries(client):
 
 
 def test_download_builtin_creates_model_row(client):
-    r = client.post("/admin/models-library/whisper-tiny/download")
+    r = client.post("/api/admin/models-library/whisper-tiny/download")
     assert r.status_code == 202, r.text
     data = r.json()
     assert data["catalog_key"] == "whisper-tiny"
@@ -64,14 +64,14 @@ def test_download_builtin_creates_model_row(client):
 
 def test_download_with_explicit_source_ms(client):
     r = client.post(
-        "/admin/models-library/whisper-small/download", params={"source": "ms"}
+        "/api/admin/models-library/whisper-small/download", params={"source": "ms"}
     )
     assert r.status_code == 202
     assert r.json()["source"] == "ms"
 
 
 def test_download_unknown_catalog_key_returns_404(client):
-    r = client.post("/admin/models-library/nonexistent/download")
+    r = client.post("/api/admin/models-library/nonexistent/download")
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "CATALOG_KEY_NOT_FOUND"
 
@@ -79,7 +79,7 @@ def test_download_unknown_catalog_key_returns_404(client):
 def test_download_invalid_source_returns_400(client):
     # Piper 只有 url 源
     r = client.post(
-        "/admin/models-library/piper-zh-huayan-medium/download",
+        "/api/admin/models-library/piper-zh-huayan-medium/download",
         params={"source": "ms"},
     )
     assert r.status_code == 400
@@ -87,16 +87,16 @@ def test_download_invalid_source_returns_400(client):
 
 
 def test_download_already_exists_returns_409(client):
-    r1 = client.post("/admin/models-library/whisper-tiny/download").json()
+    r1 = client.post("/api/admin/models-library/whisper-tiny/download").json()
     _wait_ready(client, r1["id"])
-    r2 = client.post("/admin/models-library/whisper-tiny/download")
+    r2 = client.post("/api/admin/models-library/whisper-tiny/download")
     assert r2.status_code == 409
     assert r2.json()["error"]["code"] == "MODEL_ALREADY_EXISTS"
 
 
 def test_custom_add_rejects_non_prefixed_key(client):
     r = client.post(
-        "/admin/models-library/custom",
+        "/api/admin/models-library/custom",
         json={
             "catalog_key": "my-model",      # 无 custom_ 前缀
             "source": "hf",
@@ -110,7 +110,7 @@ def test_custom_add_rejects_non_prefixed_key(client):
 
 def test_custom_add_rejects_clash_with_builtin(client):
     r = client.post(
-        "/admin/models-library/custom",
+        "/api/admin/models-library/custom",
         json={
             "catalog_key": "custom_whisper-tiny",  # 技术上合法，只要 custom_ 前缀
             "source": "hf",
@@ -124,7 +124,7 @@ def test_custom_add_rejects_clash_with_builtin(client):
 
 def test_custom_add_success(client):
     r = client.post(
-        "/admin/models-library/custom",
+        "/api/admin/models-library/custom",
         json={
             "catalog_key": "custom_my-asr",
             "source": "hf",
@@ -143,34 +143,34 @@ def test_custom_add_duplicate_returns_409(client):
         "catalog_key": "custom_dup",
         "source": "hf", "repo_id": "x/y", "kind": "asr",
     }
-    r1 = client.post("/admin/models-library/custom", json=payload)
+    r1 = client.post("/api/admin/models-library/custom", json=payload)
     assert r1.status_code == 202
-    r2 = client.post("/admin/models-library/custom", json=payload)
+    r2 = client.post("/api/admin/models-library/custom", json=payload)
     assert r2.status_code == 400
     assert r2.json()["error"]["code"] == "CATALOG_KEY_CONFLICT"
 
 
 def test_delete_model_succeeds(client):
-    r = client.post("/admin/models-library/whisper-tiny/download").json()
+    r = client.post("/api/admin/models-library/whisper-tiny/download").json()
     _wait_ready(client, r["id"])
-    r_del = client.delete(f"/admin/models-library/{r['id']}")
+    r_del = client.delete(f"/api/admin/models-library/{r['id']}")
     assert r_del.status_code == 204
 
 
 def test_delete_model_not_found_returns_404(client):
-    r = client.delete("/admin/models-library/99999")
+    r = client.delete("/api/admin/models-library/99999")
     assert r.status_code == 404
 
 
 def test_delete_rejects_if_provider_references(client):
     # 下模型
-    m = client.post("/admin/models-library/whisper-tiny/download").json()
+    m = client.post("/api/admin/models-library/whisper-tiny/download").json()
     ready = _wait_ready(client, m["id"])
     local_path = ready["local_path"]
 
     # 造一个 Provider 引用该路径
     client.post(
-        "/admin/providers",
+        "/api/admin/providers",
         json={
             "kind": "asr",
             "name": "prov-using-model",
@@ -180,11 +180,11 @@ def test_delete_rejects_if_provider_references(client):
     )
 
     # 删应该被拒
-    r = client.delete(f"/admin/models-library/{m['id']}")
+    r = client.delete(f"/api/admin/models-library/{m['id']}")
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "MODEL_IN_USE"
 
 
 def test_cancel_model_not_found(client):
-    r = client.post("/admin/models-library/99999/cancel")
+    r = client.post("/api/admin/models-library/99999/cancel")
     assert r.status_code == 404

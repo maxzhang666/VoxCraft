@@ -2,8 +2,9 @@ import axios, { AxiosError } from "axios";
 import { Toast } from "@douyinfe/semi-ui";
 import type { ErrorResponse } from "@/types/api";
 
+// 所有业务 API 统一 /api 前缀；OpenAI 兼容层 /v1/* 独立，不过这个 client。
 export const api = axios.create({
-  baseURL: "",
+  baseURL: "/api",
   timeout: 60000,
 });
 

@@ -23,7 +23,7 @@ def wait_for_job(
     """轮询 /jobs/{id} 直到终态（succeeded/failed/cancelled）。返回最终 Job 字典。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        r = client.get(f"/jobs/{job_id}")
+        r = client.get(f"/api/jobs/{job_id}")
         assert r.status_code == 200, r.text
         j = r.json()
         if j["status"] in ("succeeded", "failed", "cancelled"):

@@ -5,7 +5,7 @@ from tests.conftest import wait_for_job
 
 
 def _create_mock_asr(client):
-    r = client.post("/admin/providers", json={
+    r = client.post("/api/admin/providers", json={
         "kind": "asr",
         "name": "mock-asr",
         "class_name": "InMemoryMockAsrProvider",
@@ -14,13 +14,13 @@ def _create_mock_asr(client):
     assert r.status_code == 201
     pid = r.json()["id"]
     # 设为默认（覆盖种子的 whisper-medium-int8）
-    client.post(f"/admin/providers/{pid}/set-default")
+    client.post(f"/api/admin/providers/{pid}/set-default")
 
 
 def test_asr_returns_segments(client, mock_asr_registered):
     _create_mock_asr(client)
     r = client.post(
-        "/asr",
+        "/api/asr",
         files={"audio": ("sample.wav", b"RIFFfakewave", "audio/wav")},
     )
     assert r.status_code == 202, r.text
@@ -37,7 +37,7 @@ def test_asr_returns_segments(client, mock_asr_registered):
 def test_asr_uses_language_param(client, mock_asr_registered):
     _create_mock_asr(client)
     r = client.post(
-        "/asr",
+        "/api/asr",
         files={"audio": ("a.wav", b"RIFF", "audio/wav")},
         data={"language": "en"},
     )
@@ -50,11 +50,11 @@ def test_asr_uses_language_param(client, mock_asr_registered):
 
 def test_asr_no_provider_returns_validation_error(client, mock_asr_registered):
     # 禁用种子 ASR Provider
-    seed = client.get("/admin/providers", params={"kind": "asr"}).json()[0]
-    client.patch(f"/admin/providers/{seed['id']}", json={"enabled": False})
+    seed = client.get("/api/admin/providers", params={"kind": "asr"}).json()[0]
+    client.patch(f"/api/admin/providers/{seed['id']}", json={"enabled": False})
 
     r = client.post(
-        "/asr",
+        "/api/asr",
         files={"audio": ("a.wav", b"RIFF", "audio/wav")},
     )
     assert r.status_code == 400
@@ -64,7 +64,7 @@ def test_asr_no_provider_returns_validation_error(client, mock_asr_registered):
 def test_asr_explicit_provider_name(client, mock_asr_registered):
     _create_mock_asr(client)
     r = client.post(
-        "/asr",
+        "/api/asr",
         files={"audio": ("a.wav", b"RIFF", "audio/wav")},
         data={"provider": "mock-asr"},
     )
@@ -86,7 +86,7 @@ def test_asr_emits_job_progress_events(client, mock_asr_registered):
     q = bus.subscribe()
 
     r = client.post(
-        "/asr",
+        "/api/asr",
         files={"audio": ("a.wav", b"RIFFfake", "audio/wav")},
         data={"language": "zh"},
     )

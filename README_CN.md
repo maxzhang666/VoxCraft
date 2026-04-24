@@ -29,11 +29,11 @@
 
 | 能力 | 端点 | 默认引擎 | 说明 |
 |------|------|---------|------|
-| 语音识别 | `POST /asr` | faster-whisper | 多语言，带分段时间戳 |
-| 语音合成 | `POST /tts` | Piper | CPU 友好，延迟低 |
-| 声纹克隆 | `POST /tts/clone` | VoxCPM / IndexTTS | 几秒参考音频即可零样本克隆 |
-| 人声分离 | `POST /separate` | Demucs | 分离人声与 BGM stems |
-| **视频翻译** | `POST /video-translate` | ASR + LLM + TTS + ffmpeg | 一次请求得到字幕、配音、合成视频 |
+| 语音识别 | `POST /api/asr` | faster-whisper | 多语言，带分段时间戳 |
+| 语音合成 | `POST /api/tts` | Piper | CPU 友好，延迟低 |
+| 声纹克隆 | `POST /api/tts/clone` | VoxCPM / IndexTTS | 几秒参考音频即可零样本克隆 |
+| 人声分离 | `POST /api/separate` | Demucs | 分离人声与 BGM stems |
+| **视频翻译** | `POST /api/video-translate` | ASR + LLM + TTS + ffmpeg | 一次请求得到字幕、配音、合成视频 |
 | OpenAI 兼容层 | `POST /v1/audio/{transcriptions,speech}` | — | 直接替换 OpenAI SDK base_url |
 | Web UI | `GET /ui/` | React + Semi Design | 上传、监控任务、管理 Provider |
 
@@ -52,7 +52,7 @@ docker run -d --name voxcraft \
 
 - Web UI → http://localhost:8001/
 - API 文档（OpenAPI / Swagger）→ http://localhost:8001/docs
-- 健康检查 → http://localhost:8001/health
+- 健康检查 → http://localhost:8001/api/health
 
 无 GPU？见 [部署](#部署)。
 
@@ -60,21 +60,21 @@ docker run -d --name voxcraft \
 
 所有业务端点都是**异步**的。提交立刻返回 `202 { job_id, status: "pending" }`；推理在后台串行队列中执行。获取结果两种方式：
 
-- **Server-Sent Events**：`GET /admin/events`，监听 `job_status_changed`
-- **轮询**：`GET /jobs/{id}`，直到 `status ∈ {succeeded, failed, cancelled}`
+- **Server-Sent Events**：`GET /api/admin/events`，监听 `job_status_changed`
+- **轮询**：`GET /api/jobs/{id}`，直到 `status ∈ {succeeded, failed, cancelled}`
 
-产物下载：`GET /jobs/{id}/output`（单产物）或 `?key=<name>`（多产物）。失败任务可用 `POST /jobs/{id}/retry` 重新入队。
+产物下载：`GET /api/jobs/{id}/output`（单产物）或 `?key=<name>`（多产物）。失败任务可用 `POST /api/jobs/{id}/retry` 重新入队。
 
 ### 语音识别
 
 ```bash
-curl -X POST http://localhost:8001/asr -F "audio=@lecture.mp3" -F "language=en"
+curl -X POST http://localhost:8001/api/asr -F "audio=@lecture.mp3" -F "language=en"
 ```
 
 ### 语音合成
 
 ```bash
-curl -X POST http://localhost:8001/tts \
+curl -X POST http://localhost:8001/api/tts \
   -H "Content-Type: application/json" \
   -d '{"text": "你好，世界。", "voice_id": "piper-zh"}'
 ```
@@ -82,7 +82,7 @@ curl -X POST http://localhost:8001/tts \
 ### 声纹克隆
 
 ```bash
-curl -X POST http://localhost:8001/tts/clone \
+curl -X POST http://localhost:8001/api/tts/clone \
   -F "text=用这个声音说话。" \
   -F "reference_audio=@speaker.wav"
 ```
@@ -90,10 +90,10 @@ curl -X POST http://localhost:8001/tts/clone \
 ### 人声分离
 
 ```bash
-curl -X POST http://localhost:8001/separate -F "audio=@song.mp3"
+curl -X POST http://localhost:8001/api/separate -F "audio=@song.mp3"
 # 拿 stems：
-# GET /jobs/{id}/output?key=vocals
-# GET /jobs/{id}/output?key=instrumental
+# GET /api/jobs/{id}/output?key=vocals
+# GET /api/jobs/{id}/output?key=instrumental
 ```
 
 ### 视频翻译
@@ -101,7 +101,7 @@ curl -X POST http://localhost:8001/separate -F "audio=@song.mp3"
 端到端处理视频或音频：字幕 + 配音音频 + 合成视频（视频输入时）。
 
 ```bash
-curl -X POST http://localhost:8001/video-translate \
+curl -X POST http://localhost:8001/api/video-translate \
   -F "source_file=@lecture.mp4" \
   -F "target_lang=zh" \
   -F "subtitle_mode=soft" \
@@ -148,14 +148,14 @@ audio.stream_to_file("out.mp3")
 
 - 转录响应格式：`json`、`text`、`srt`、`vtt`、`verbose_json`
 - 默认请求超时 10 分钟（客户端可覆盖）
-- 每个响应带 `X-VoxCraft-Job-Id` 头，用于回溯原生 `/jobs/{id}` 记录
+- 每个响应带 `X-VoxCraft-Job-Id` 头，用于回溯原生 `/api/jobs/{id}` 记录
 - 错误走 OpenAI envelope：`{ "error": { "message", "type", "code" } }`
 
 声纹克隆和人声分离不在 OpenAI 标准内，请用上面的原生端点。
 
 ## LLM 配置
 
-文字任务委托给任意 OpenAI 兼容端点。在设置 → **LLM 配置**页新增，或通过 `POST /admin/llm`：
+文字任务委托给任意 OpenAI 兼容端点。在设置 → **LLM 配置**页新增，或通过 `POST /api/admin/llm`：
 
 | 场景 | Base URL | 示例 model |
 |------|----------|-----------|
@@ -176,7 +176,7 @@ audio.stream_to_file("out.mp3")
 | `VOXCRAFT_DB` | `./data/voxcraft.sqlite` | SQLite 配置与任务库 |
 | `VOXCRAFT_OUTPUT_DIR` | `./data/outputs` | 任务产物目录 |
 | `VOXCRAFT_MODELS_DIR` | `./models` | 模型权重缓存 |
-| `VOXCRAFT_MAX_UPLOAD_SIZE` | `2147483648`（2 GiB） | `/video-translate` 上传大小上限 |
+| `VOXCRAFT_MAX_UPLOAD_SIZE` | `2147483648`（2 GiB） | `/api/video-translate` 上传大小上限 |
 | `VOXCRAFT_LOG_LEVEL` | `INFO` | 日志级别 |
 | `VOXCRAFT_PREFERRED_SOURCE` | `hf` | 默认模型源（`hf` / `ms`） |
 

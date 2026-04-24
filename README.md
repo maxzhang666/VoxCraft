@@ -29,11 +29,11 @@ Commercial audio-AI platforms are powerful but expensive, opaque, and ship your 
 
 | Capability | Endpoint | Default engine | Notes |
 |-----------|----------|----------------|-------|
-| Speech recognition | `POST /asr` | faster-whisper | Multilingual, timestamped segments |
-| Text-to-speech | `POST /tts` | Piper | CPU-friendly, low latency |
-| Voice cloning | `POST /tts/clone` | VoxCPM / IndexTTS | Zero-shot from a few seconds of reference audio |
-| Vocal separation | `POST /separate` | Demucs | Vocals + instrumental stems |
-| **Video translation** | `POST /video-translate` | ASR + LLM + TTS + ffmpeg | Upload a clip, get subtitles, dubbed audio, and a composed video |
+| Speech recognition | `POST /api/asr` | faster-whisper | Multilingual, timestamped segments |
+| Text-to-speech | `POST /api/tts` | Piper | CPU-friendly, low latency |
+| Voice cloning | `POST /api/tts/clone` | VoxCPM / IndexTTS | Zero-shot from a few seconds of reference audio |
+| Vocal separation | `POST /api/separate` | Demucs | Vocals + instrumental stems |
+| **Video translation** | `POST /api/video-translate` | ASR + LLM + TTS + ffmpeg | Upload a clip, get subtitles, dubbed audio, and a composed video |
 | OpenAI-compatible | `POST /v1/audio/{transcriptions,speech}` | — | Drop-in replacement for OpenAI audio SDK clients |
 | Admin Web UI | `GET /ui/` | React + Semi Design | Upload, monitor jobs, manage providers |
 
@@ -52,7 +52,7 @@ Replace `OWNER` with the user or organization hosting your fork. Then open:
 
 - Web UI → http://localhost:8001/
 - API docs (OpenAPI / Swagger) → http://localhost:8001/docs
-- Health → http://localhost:8001/health
+- Health → http://localhost:8001/api/health
 
 No GPU? Run on CPU — see [Deployment](#deployment).
 
@@ -60,21 +60,21 @@ No GPU? Run on CPU — see [Deployment](#deployment).
 
 All business endpoints are **asynchronous**. Submit returns `202 { job_id, status: "pending" }` immediately; inference runs in a serial background queue. Watch for completion via:
 
-- **Server-Sent Events**: `GET /admin/events` — listen for `job_status_changed`
-- **Polling**: `GET /jobs/{id}` until `status` is `succeeded`, `failed`, or `cancelled`
+- **Server-Sent Events**: `GET /api/admin/events` — listen for `job_status_changed`
+- **Polling**: `GET /api/jobs/{id}` until `status` is `succeeded`, `failed`, or `cancelled`
 
-Download artifacts with `GET /jobs/{id}/output` (or `?key=<name>` for multi-product jobs). Failed jobs can be re-queued with `POST /jobs/{id}/retry`.
+Download artifacts with `GET /api/jobs/{id}/output` (or `?key=<name>` for multi-product jobs). Failed jobs can be re-queued with `POST /api/jobs/{id}/retry`.
 
 ### Speech recognition
 
 ```bash
-curl -X POST http://localhost:8001/asr -F "audio=@lecture.mp3" -F "language=en"
+curl -X POST http://localhost:8001/api/asr -F "audio=@lecture.mp3" -F "language=en"
 ```
 
 ### Text-to-speech
 
 ```bash
-curl -X POST http://localhost:8001/tts \
+curl -X POST http://localhost:8001/api/tts \
   -H "Content-Type: application/json" \
   -d '{"text": "Hello, world.", "voice_id": "piper-zh"}'
 ```
@@ -82,7 +82,7 @@ curl -X POST http://localhost:8001/tts \
 ### Voice cloning
 
 ```bash
-curl -X POST http://localhost:8001/tts/clone \
+curl -X POST http://localhost:8001/api/tts/clone \
   -F "text=Speak with this voice." \
   -F "reference_audio=@speaker.wav"
 ```
@@ -90,10 +90,10 @@ curl -X POST http://localhost:8001/tts/clone \
 ### Vocal separation
 
 ```bash
-curl -X POST http://localhost:8001/separate -F "audio=@song.mp3"
+curl -X POST http://localhost:8001/api/separate -F "audio=@song.mp3"
 # Retrieve stems:
-# GET /jobs/{id}/output?key=vocals
-# GET /jobs/{id}/output?key=instrumental
+# GET /api/jobs/{id}/output?key=vocals
+# GET /api/jobs/{id}/output?key=instrumental
 ```
 
 ### Video translation
@@ -101,7 +101,7 @@ curl -X POST http://localhost:8001/separate -F "audio=@song.mp3"
 Translate a video or audio file end-to-end: subtitles, dubbed audio, and (for video input) a composed video with replaced audio and embedded subtitles.
 
 ```bash
-curl -X POST http://localhost:8001/video-translate \
+curl -X POST http://localhost:8001/api/video-translate \
   -F "source_file=@lecture.mp4" \
   -F "target_lang=zh" \
   -F "subtitle_mode=soft" \
@@ -148,14 +148,14 @@ audio.stream_to_file("out.mp3")
 
 - Supported response formats for transcriptions: `json`, `text`, `srt`, `vtt`, `verbose_json`
 - Default request timeout: 10 minutes (override via your client)
-- Every response carries `X-VoxCraft-Job-Id` for tracing back to the native `/jobs/{id}` record
+- Every response carries `X-VoxCraft-Job-Id` for tracing back to the native `/api/jobs/{id}` record
 - Errors follow the OpenAI envelope: `{ "error": { "message", "type", "code" } }`
 
 Voice cloning and vocal separation are not part of the OpenAI standard — use the native endpoints above.
 
 ## LLM Configuration
 
-Text tasks delegate to any OpenAI-compatible endpoint. Add providers in Settings → **LLM Config**, or via `POST /admin/llm`:
+Text tasks delegate to any OpenAI-compatible endpoint. Add providers in Settings → **LLM Config**, or via `POST /api/admin/llm`:
 
 | Scenario | Base URL | Example model |
 |----------|----------|---------------|
@@ -176,7 +176,7 @@ The **LLM Config** page has a "Fetch models" button that calls `/v1/models` on t
 | `VOXCRAFT_DB` | `./data/voxcraft.sqlite` | SQLite config + job database |
 | `VOXCRAFT_OUTPUT_DIR` | `./data/outputs` | Job artifacts directory |
 | `VOXCRAFT_MODELS_DIR` | `./models` | Model weights cache |
-| `VOXCRAFT_MAX_UPLOAD_SIZE` | `2147483648` (2 GiB) | Upload size limit for `/video-translate` |
+| `VOXCRAFT_MAX_UPLOAD_SIZE` | `2147483648` (2 GiB) | Upload size limit for `/api/video-translate` |
 | `VOXCRAFT_LOG_LEVEL` | `INFO` | Log level |
 | `VOXCRAFT_PREFERRED_SOURCE` | `hf` | Default model source (`hf` / `ms`) |
 

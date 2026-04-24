@@ -25,7 +25,7 @@ def test_non_cloning_providers_empty():
 
 
 def test_classes_endpoint_exposes_capabilities(client):
-    r = client.get("/admin/providers/classes")
+    r = client.get("/api/admin/providers/classes")
     assert r.status_code == 200, r.text
     by_name = {c["class_name"]: c for c in r.json()}
 

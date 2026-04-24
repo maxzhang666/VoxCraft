@@ -22,10 +22,13 @@ export const retryJob = (id: string) =>
     .post<{ job_id: string; status: string }>(`/jobs/${id}/retry`)
     .then((r) => r.data);
 
+// 直接拼出完整路径（含 /api 前缀），用于 window.open / <audio src=...> 等不走 axios 的场景。
 export const jobOutputUrl = (id: string, key?: string) =>
-  key ? `/jobs/${id}/output?key=${encodeURIComponent(key)}` : `/jobs/${id}/output`;
+  key
+    ? `/api/jobs/${id}/output?key=${encodeURIComponent(key)}`
+    : `/api/jobs/${id}/output`;
 
 export const jobPreviewUrl = (id: string, key?: string) =>
   key
-    ? `/jobs/${id}/output/preview?key=${encodeURIComponent(key)}`
-    : `/jobs/${id}/output/preview`;
+    ? `/api/jobs/${id}/output/preview?key=${encodeURIComponent(key)}`
+    : `/api/jobs/${id}/output/preview`;

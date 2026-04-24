@@ -92,14 +92,16 @@ def create_app() -> FastAPI:
 
     register_error_handlers(app)
 
-    app.include_router(health.router)
-    app.include_router(admin.router)
-    app.include_router(admin_llm.router)
-    app.include_router(jobs.router)
-    app.include_router(business.router)
-    app.include_router(video_translate.router)
-    app.include_router(events.router)
-    app.include_router(models_library.router)
+    # 统一 /api 前缀挂载全部业务 / 管理 / SSE / 模型库路由；
+    # OpenAI 兼容层 /v1/audio/* 是规范路径，不加前缀。
+    app.include_router(health.router, prefix="/api")
+    app.include_router(admin.router, prefix="/api")
+    app.include_router(admin_llm.router, prefix="/api")
+    app.include_router(jobs.router, prefix="/api")
+    app.include_router(business.router, prefix="/api")
+    app.include_router(video_translate.router, prefix="/api")
+    app.include_router(events.router, prefix="/api")
+    app.include_router(models_library.router, prefix="/api")
     app.include_router(oai_compat.router)
 
     if _STATIC_DIR.exists():

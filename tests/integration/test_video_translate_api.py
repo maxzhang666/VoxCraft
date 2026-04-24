@@ -27,7 +27,7 @@ def _seed_llm(client, **overrides) -> dict:
         "model": "gpt-4o-mini",
         **overrides,
     }
-    r = client.post("/admin/llm", json=body)
+    r = client.post("/api/admin/llm", json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -52,7 +52,7 @@ def _post(client, *, filename: str, data: dict | None = None, extra_headers: dic
     data = dict(data or {})
     data.setdefault("target_lang", "zh")
     return client.post(
-        "/video-translate",
+        "/api/video-translate",
         files={"source_file": (filename, io.BytesIO(_fake_audio_bytes()), "audio/wav")},
         data=data,
         headers=extra_headers or {},

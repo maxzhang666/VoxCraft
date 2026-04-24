@@ -10,20 +10,20 @@ from __future__ import annotations
 
 
 def _seed_mock_asr(client):
-    p = client.post("/admin/providers", json={
+    p = client.post("/api/admin/providers", json={
         "kind": "asr", "name": "mock-asr",
         "class_name": "InMemoryMockAsrProvider", "config": {},
     }).json()
-    client.post(f"/admin/providers/{p['id']}/set-default")
+    client.post(f"/api/admin/providers/{p['id']}/set-default")
     return p
 
 
 def _seed_mock_tts(client):
-    p = client.post("/admin/providers", json={
+    p = client.post("/api/admin/providers", json={
         "kind": "tts", "name": "mock-tts",
         "class_name": "InMemoryMockTtsProvider", "config": {},
     }).json()
-    client.post(f"/admin/providers/{p['id']}/set-default")
+    client.post(f"/api/admin/providers/{p['id']}/set-default")
     return p
 
 
@@ -111,8 +111,8 @@ def test_transcriptions_default_format_is_json(client, mock_all_registered):
 
 def test_transcriptions_no_provider_returns_oai_error_envelope(client, mock_all_registered):
     # 禁用种子；Mock 未注入默认 → select_provider 抛 VALIDATION_ERROR
-    for p in client.get("/admin/providers", params={"kind": "asr"}).json():
-        client.patch(f"/admin/providers/{p['id']}", json={"enabled": False})
+    for p in client.get("/api/admin/providers", params={"kind": "asr"}).json():
+        client.patch(f"/api/admin/providers/{p['id']}", json={"enabled": False})
 
     r = client.post(
         "/v1/audio/transcriptions",
@@ -137,7 +137,7 @@ def test_transcriptions_explicit_provider_via_model_field(client, mock_all_regis
     assert r.status_code == 200
     # 验证用的确是 mock-asr（通过 X-VoxCraft-Job-Id 拉详情）
     job_id = r.headers["X-VoxCraft-Job-Id"]
-    job = client.get(f"/jobs/{job_id}").json()
+    job = client.get(f"/api/jobs/{job_id}").json()
     assert job["provider_name"] == "mock-asr"
 
 
@@ -184,8 +184,8 @@ def test_speech_validation_error_for_empty_input(client, mock_all_registered):
 
 
 def test_speech_no_provider_returns_oai_error(client):
-    for p in client.get("/admin/providers", params={"kind": "tts"}).json():
-        client.patch(f"/admin/providers/{p['id']}", json={"enabled": False})
+    for p in client.get("/api/admin/providers", params={"kind": "tts"}).json():
+        client.patch(f"/api/admin/providers/{p['id']}", json={"enabled": False})
 
     r = client.post(
         "/v1/audio/speech",

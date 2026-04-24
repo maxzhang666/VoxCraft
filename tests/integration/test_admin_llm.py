@@ -10,7 +10,7 @@ def _create(client, **overrides) -> dict:
         "model": "gpt-4o-mini",
         **overrides,
     }
-    r = client.post("/admin/llm", json=body)
+    r = client.post("/api/admin/llm", json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -21,7 +21,7 @@ def test_llm_crud_roundtrip(client):
     # api_key 不得出现在响应中
     assert "api_key" not in created
 
-    lst = client.get("/admin/llm").json()
+    lst = client.get("/api/admin/llm").json()
     assert len(lst) == 1
     assert "api_key" not in lst[0]
 
@@ -31,7 +31,7 @@ def test_llm_patch_empty_api_key_preserves_original(client):
     id_ = created["id"]
 
     # PATCH 留空 api_key → 不应覆盖原值
-    r = client.patch(f"/admin/llm/{id_}", json={"api_key": "", "model": "gpt-4o"})
+    r = client.patch(f"/api/admin/llm/{id_}", json={"api_key": "", "model": "gpt-4o"})
     assert r.status_code == 200
     assert r.json()["model"] == "gpt-4o"
 
@@ -47,7 +47,7 @@ def test_llm_patch_empty_api_key_preserves_original(client):
 def test_llm_patch_new_api_key_overrides(client):
     created = _create(client, api_key="sk-old")
     id_ = created["id"]
-    client.patch(f"/admin/llm/{id_}", json={"api_key": "sk-new"})
+    client.patch(f"/api/admin/llm/{id_}", json={"api_key": "sk-new"})
 
     from voxcraft.db.engine import get_engine
     from voxcraft.db.models import LlmProvider
@@ -60,25 +60,25 @@ def test_llm_patch_new_api_key_overrides(client):
 def test_llm_set_default_is_mutually_exclusive(client):
     a = _create(client, name="a", is_default=True)
     b = _create(client, name="b", is_default=False)
-    r = client.post(f"/admin/llm/{b['id']}/set-default")
+    r = client.post(f"/api/admin/llm/{b['id']}/set-default")
     assert r.status_code == 200
     assert r.json()["is_default"] is True
 
-    refreshed_a = next(x for x in client.get("/admin/llm").json() if x["id"] == a["id"])
+    refreshed_a = next(x for x in client.get("/api/admin/llm").json() if x["id"] == a["id"])
     assert refreshed_a["is_default"] is False
 
 
 def test_llm_delete(client):
     created = _create(client)
-    r = client.delete(f"/admin/llm/{created['id']}")
+    r = client.delete(f"/api/admin/llm/{created['id']}")
     assert r.status_code == 204
-    assert client.get("/admin/llm").json() == []
+    assert client.get("/api/admin/llm").json() == []
 
 
 def test_llm_not_found_errors(client):
-    r = client.get("/admin/llm")
+    r = client.get("/api/admin/llm")
     assert r.json() == []
-    r2 = client.patch("/admin/llm/999", json={"model": "x"})
+    r2 = client.patch("/api/admin/llm/999", json={"model": "x"})
     assert r2.status_code == 404
     assert r2.json()["error"]["code"] == "LLM_PROVIDER_NOT_FOUND"
 
@@ -87,7 +87,7 @@ def test_probe_models_with_explicit_api_key(client, monkeypatch):
     """新建场景：api_key + base_url 调 probe-models。"""
     _patch_openai_models(monkeypatch, ids=["gpt-4o", "gpt-4o-mini"])
     r = client.post(
-        "/admin/llm/probe-models",
+        "/api/admin/llm/probe-models",
         json={"base_url": "https://api.openai.com/v1", "api_key": "sk-new"},
     )
     assert r.status_code == 200, r.text
@@ -100,7 +100,7 @@ def test_probe_models_with_use_id(client, monkeypatch):
     _patch_openai_models(monkeypatch, ids=["deepseek-chat"])
 
     r = client.post(
-        "/admin/llm/probe-models",
+        "/api/admin/llm/probe-models",
         json={"base_url": "https://api.deepseek.com/v1", "use_id": created["id"]},
     )
     assert r.status_code == 200, r.text
@@ -109,7 +109,7 @@ def test_probe_models_with_use_id(client, monkeypatch):
 
 def test_probe_models_use_id_not_found(client):
     r = client.post(
-        "/admin/llm/probe-models",
+        "/api/admin/llm/probe-models",
         json={"base_url": "https://x", "use_id": 99999},
     )
     assert r.status_code == 404
@@ -118,7 +118,7 @@ def test_probe_models_use_id_not_found(client):
 
 def test_probe_models_requires_auth(client):
     # 既无 api_key 也无 use_id
-    r = client.post("/admin/llm/probe-models", json={"base_url": "https://x"})
+    r = client.post("/api/admin/llm/probe-models", json={"base_url": "https://x"})
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
@@ -128,7 +128,7 @@ def test_probe_models_upstream_failure(client, monkeypatch):
         monkeypatch, raise_exc=RuntimeError("401 Unauthorized"),
     )
     r = client.post(
-        "/admin/llm/probe-models",
+        "/api/admin/llm/probe-models",
         json={"base_url": "https://x", "api_key": "sk-bad"},
     )
     assert r.status_code == 502
@@ -160,7 +160,7 @@ def _patch_openai_models(monkeypatch, *, ids=None, raise_exc=None):
 
 
 def test_llm_name_validation(client):
-    r = client.post("/admin/llm", json={
+    r = client.post("/api/admin/llm", json={
         "name": "Has Space",
         "base_url": "https://x", "api_key": "sk", "model": "m",
     })

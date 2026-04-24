@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { SseEvent } from "@/types/api";
 
-const SSE_URL = "/admin/events";
+const SSE_URL = "/api/admin/events";
 
 type Handler = (ev: SseEvent) => void;
 
