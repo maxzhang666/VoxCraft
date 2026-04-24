@@ -31,7 +31,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # GHCR / Docker 要求 image reference 全小写；github.repository 可能含大写（如 maxzhang666/VoxCraft）
+  # 在 job step 动态转成小写写入 env.IMAGE_NAME，后续所有 step 复用
 
 concurrency:
   group: docker-build-${{ github.ref }}
@@ -47,6 +48,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Normalize image name to lowercase
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
