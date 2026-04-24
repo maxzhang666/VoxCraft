@@ -79,3 +79,159 @@ def test_scan_skips_files_only_processes_dirs(engine, tmp_path):
     (models_dir / "whisper-medium" / "model.bin").write_bytes(b"z")
 
     assert scan_existing_models(engine) == 1
+
+
+def test_scan_does_not_duplicate_catalog_downloads(engine, tmp_path):
+    """回归：之前每个下载好的 catalog 模型都会被扫成 `manual_<name>` 孤儿。"""
+    from voxcraft.db.bootstrap import scan_existing_models
+    from voxcraft.db.models import Model
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "whisper-tiny").mkdir()
+    (models_dir / "whisper-tiny" / "model.bin").write_bytes(b"x" * 50)
+
+    # 模拟 ModelDownloadService 下载完成：已有一行 Model 认领了该目录
+    with Session(engine) as s:
+        s.add(
+            Model(
+                catalog_key="whisper-tiny",
+                source="hf",
+                repo_id="Systran/faster-whisper-tiny",
+                kind="asr",
+                local_path=str(models_dir / "whisper-tiny"),
+                status="ready",
+                progress=1.0,
+                size_bytes=50,
+            )
+        )
+        s.commit()
+
+    inserted = scan_existing_models(engine)
+    assert inserted == 0, "已被 catalog Model 认领的目录不该再生成 manual_*"
+
+    with Session(engine) as s:
+        keys = {r.catalog_key for r in s.exec(select(Model)).all()}
+        assert keys == {"whisper-tiny"}, "不该出现 manual_whisper-tiny 孤儿"
+
+
+def test_scan_mixes_claimed_and_unclaimed_dirs(engine, tmp_path):
+    """一个目录被 catalog Model 认领，另一个未认领 → 只有未认领的成为 manual。"""
+    from voxcraft.db.bootstrap import scan_existing_models
+    from voxcraft.db.models import Model
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "whisper-tiny").mkdir()
+    (models_dir / "whisper-tiny" / "a.bin").write_bytes(b"1")
+    (models_dir / "some-custom-lora").mkdir()
+    (models_dir / "some-custom-lora" / "b.bin").write_bytes(b"2")
+
+    with Session(engine) as s:
+        s.add(
+            Model(
+                catalog_key="whisper-tiny",
+                source="hf", repo_id="x", kind="asr",
+                local_path=str(models_dir / "whisper-tiny"),
+                status="ready", progress=1.0,
+            )
+        )
+        s.commit()
+
+    inserted = scan_existing_models(engine)
+    assert inserted == 1
+
+    with Session(engine) as s:
+        keys = {r.catalog_key for r in s.exec(select(Model)).all()}
+        assert keys == {"whisper-tiny", "manual_some-custom-lora"}
+
+
+def test_scan_purges_legacy_manual_duplicates(engine, tmp_path):
+    """历史遗留：旧版 scan bug 已经把同目录插成两条（catalog + manual_）。
+    新版 scan 启动时应清理掉 manual_ 那条。"""
+    from voxcraft.db.bootstrap import scan_existing_models
+    from voxcraft.db.models import Model
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "whisper-tiny").mkdir()
+    (models_dir / "whisper-tiny" / "a.bin").write_bytes(b"x")
+
+    with Session(engine) as s:
+        s.add(
+            Model(
+                catalog_key="whisper-tiny",
+                source="hf", repo_id="x", kind="asr",
+                local_path=str(models_dir / "whisper-tiny"),
+                status="ready", progress=1.0,
+            )
+        )
+        s.add(
+            Model(
+                catalog_key="manual_whisper-tiny",
+                source="manual", repo_id="", kind="unknown",
+                local_path=str(models_dir / "whisper-tiny"),
+                status="ready", progress=1.0,
+            )
+        )
+        s.commit()
+
+    scan_existing_models(engine)
+
+    with Session(engine) as s:
+        keys = {r.catalog_key for r in s.exec(select(Model)).all()}
+        assert keys == {"whisper-tiny"}, "manual_* 重复应被一次性清理"
+
+
+def test_scan_keeps_standalone_manual_rows(engine, tmp_path):
+    """单独存在的 manual_* 记录（无同目录 catalog 对应）不该被误删。"""
+    from voxcraft.db.bootstrap import scan_existing_models
+    from voxcraft.db.models import Model
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "my-fork").mkdir()
+    (models_dir / "my-fork" / "w.bin").write_bytes(b"y")
+
+    with Session(engine) as s:
+        s.add(
+            Model(
+                catalog_key="manual_my-fork",
+                source="manual", repo_id="", kind="unknown",
+                local_path=str(models_dir / "my-fork"),
+                status="ready", progress=1.0,
+            )
+        )
+        s.commit()
+
+    scan_existing_models(engine)
+
+    with Session(engine) as s:
+        keys = {r.catalog_key for r in s.exec(select(Model)).all()}
+        assert keys == {"manual_my-fork"}
+
+
+def test_scan_tolerates_claimed_path_on_missing_disk(engine, tmp_path):
+    """Model.local_path 指向不存在的目录时，不影响其他目录的扫描。"""
+    from voxcraft.db.bootstrap import scan_existing_models
+    from voxcraft.db.models import Model
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "real-dir").mkdir()
+    (models_dir / "real-dir" / "f.bin").write_bytes(b"ok")
+
+    with Session(engine) as s:
+        s.add(
+            Model(
+                catalog_key="ghost",
+                source="hf", repo_id="x", kind="asr",
+                local_path=str(models_dir / "no-such-dir"),
+                status="ready", progress=1.0,
+            )
+        )
+        s.commit()
+
+    inserted = scan_existing_models(engine)
+    # real-dir 未被认领 → 1 条 manual
+    assert inserted == 1
