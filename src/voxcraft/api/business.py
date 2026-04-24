@@ -238,18 +238,48 @@ async def submit_separate(
 
 @router.get("/tts/voices", response_model=VoicesResponse)
 async def list_voices(session: Session = Depends(get_session)):
-    rows = session.exec(
+    """返回全部可用音色，前端按 provider_name 过滤渲染。
+
+    两类 source：
+    - `preset`：非克隆 TTS（如 Piper）自带的单音色；id = Provider 名
+    - `cloned`：来自 VoiceRef（声纹克隆页动态生成）
+
+    克隆型 Provider（声明 CAPABILITIES 含 "clone"）**不** 产出 preset 条目——
+    其音色仅来自 VoiceRef。
+    """
+    voices: list[VoiceSchema] = []
+
+    providers = session.exec(
         select(Provider).where(
             Provider.enabled == True,  # noqa: E712
             Provider.kind.in_(["tts", "cloning"]),  # type: ignore[attr-defined]
         )
     ).all()
-    voices: list[VoiceSchema] = []
+    for p in providers:
+        if _provider_supports_clone(p.class_name):
+            # 克隆型 Provider：没有内置预设音色
+            continue
+        voices.append(VoiceSchema(
+            id=p.name, language="zh",
+            provider_name=p.name, source="preset",
+        ))
+
     for v in session.exec(select(VoiceRef)).all():
-        voices.append(VoiceSchema(id=v.id, language="zh", sample_url=None))
-    for p in rows:
-        voices.append(VoiceSchema(id=p.name, language="zh"))
+        voices.append(VoiceSchema(
+            id=v.id, language="zh",
+            provider_name=v.provider_name, source="cloned",
+        ))
     return VoicesResponse(voices=voices)
+
+
+def _provider_supports_clone(class_name: str) -> bool:
+    """是否是克隆型 Provider。查 registry 获取 CAPABILITIES；unknown class 保守视为非克隆。"""
+    from voxcraft.providers import capabilities
+    from voxcraft.providers.registry import PROVIDER_REGISTRY
+    cls = PROVIDER_REGISTRY.get(class_name)
+    if cls is None:
+        return False
+    return capabilities.CLONE in cls.CAPABILITIES
 
 
 # ---------- 后台 Runner（异步提交 + retry 共用入口）----------

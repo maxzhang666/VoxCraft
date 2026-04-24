@@ -19,6 +19,8 @@ class VoiceSchema(BaseModel):
     language: str
     gender: str | None = None
     sample_url: str | None = None
+    provider_name: str                    # 归属 Provider；前端按此过滤
+    source: Literal["preset", "cloned"]   # preset=Provider 内置单音色；cloned=VoiceRef
 
 
 class VoicesResponse(BaseModel):

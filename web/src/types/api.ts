@@ -102,6 +102,8 @@ export interface Voice {
   language: string;
   gender?: string | null;
   sample_url?: string | null;
+  provider_name: string;
+  source: "preset" | "cloned";
 }
 
 export interface SseEvent<P = Record<string, unknown>> {
