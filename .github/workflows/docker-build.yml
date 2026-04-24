@@ -80,6 +80,9 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Registry cache：cache layer 存到 GHCR 独立 tag（buildcache），不受 GHA 10GB 限额约束
+          # mode=max 缓存所有中间层，torch 装包层（~5GB）跨 run 复用，增量 build <2min
+          # PR 不推送普通 image，也不写 cache，只 read（避免污染 cache tag）
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}:buildcache,mode=max', env.REGISTRY, env.IMAGE_NAME) || '' }}
           provenance: false
