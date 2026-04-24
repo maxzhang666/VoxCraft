@@ -19,6 +19,8 @@ interface SegmentDetail {
   source_text: string;
   translated_text: string;
   untranslated: boolean;
+  llm_raw: string | null;        // LLM 实际输出（即便被判定为不合格仍保留）
+  degrade_reason: string | null; // 降级原因：empty output / markdown / inflation / metadata leak
 }
 
 interface Props {
@@ -269,7 +271,7 @@ function SegmentsTable({ segments }: { segments: SegmentDetail[] }) {
         <Text strong>原文-译文对照（{segments.length} 段）</Text>
         {untranslatedCount > 0 && (
           <Tag color="yellow">
-            {untranslatedCount} 段未翻译（已回退原文）
+            {untranslatedCount} 段未翻译 · 点击行展开看诊断
           </Tag>
         )}
       </div>
@@ -279,7 +281,74 @@ function SegmentsTable({ segments }: { segments: SegmentDetail[] }) {
         rowKey="index"
         size="small"
         pagination={segments.length > 20 ? { pageSize: 20 } : false}
+        expandedRowRender={(r: SegmentDetail | undefined) =>
+          r?.untranslated ? <UntranslatedDiagnosis seg={r} /> : null
+        }
+        rowExpandable={(r: SegmentDetail | undefined) => !!r?.untranslated}
+        expandAllRows={false}
       />
+    </div>
+  );
+}
+
+// ---------- 未翻译段诊断子行 ----------
+
+const DEGRADE_REASON_LABEL: Record<string, string> = {
+  "empty output": "LLM 返回空（可能超时 / 配额 / 内容过滤）",
+  "markdown detected": "LLM 输出了 markdown 格式符（```、**、# 等）",
+  "metadata leak": "LLM 输出含 <thinking> / [SYSTEM] 等元信息（思考型模型副作用）",
+};
+
+function _reasonLabel(reason: string | null): string {
+  if (!reason) return "未知";
+  // "metadata leak (<thinking>)" → prefix 匹配
+  if (reason.startsWith("metadata leak")) return DEGRADE_REASON_LABEL["metadata leak"];
+  if (reason.startsWith("extreme inflation")) {
+    return "LLM 输出异常膨胀（>3×）—— 通常是把翻译变成了解释";
+  }
+  return DEGRADE_REASON_LABEL[reason] ?? reason;
+}
+
+function UntranslatedDiagnosis({ seg }: { seg: SegmentDetail }) {
+  return (
+    <div
+      style={{
+        padding: "var(--vc-spacing-sm)",
+        backgroundColor: "var(--semi-color-warning-light-default, #fff7e6)",
+        borderRadius: 4,
+      }}
+    >
+      <div style={{ marginBottom: 6 }}>
+        <Text type="warning" strong>
+          触发原因：
+        </Text>{" "}
+        <Text type="warning">{_reasonLabel(seg.degrade_reason)}</Text>
+        {seg.degrade_reason && seg.degrade_reason !== _reasonLabel(seg.degrade_reason) && (
+          <Text type="tertiary" size="small" style={{ marginLeft: 6 }}>
+            [{seg.degrade_reason}]
+          </Text>
+        )}
+      </div>
+      <div>
+        <Text type="tertiary" size="small">
+          LLM 原始输出：
+        </Text>
+        <pre
+          style={{
+            margin: "4px 0 0",
+            padding: "var(--vc-spacing-sm)",
+            backgroundColor: "var(--vc-color-bg-muted, #f6f6f6)",
+            fontSize: 12,
+            borderRadius: 4,
+            maxHeight: 160,
+            overflow: "auto",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {seg.llm_raw || "(空)"}
+        </pre>
+      </div>
     </div>
   );
 }

@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Protocol
 
+# 注：上面的 dataclass 也被 _TranslateOutcome（见 Stage 翻译段）使用
+
 import structlog
 
 from voxcraft.errors import (
@@ -143,7 +145,7 @@ def run_video_translate(
 
         # ---- Stage 3/5 · 翻译 ----
         progress.stage_started("translate")
-        translated_texts = _translate_segments(
+        translate_outcomes = _translate_segments(
             segments_raw,
             source_lang=meta.get("source_lang") or asr_result.language,
             target_lang=meta["target_lang"],
@@ -156,7 +158,10 @@ def run_video_translate(
 
         # ---- 时间轴对齐（plan 阶段）----
         source_segs = [
-            SourceSegment(index=i + 1, start=s.start, end=s.end, text=translated_texts[i])
+            SourceSegment(
+                index=i + 1, start=s.start, end=s.end,
+                text=translate_outcomes[i].final_text,
+            )
             for i, s in enumerate(segments_raw)
         ]
         planned = plan_alignment(
@@ -240,7 +245,7 @@ def run_video_translate(
         # 主产物：视频输入 → video；音频输入 → audio
         output_path = str(video_out_path) if video_out_path else str(audio_out_path)
 
-        # 每段对照详情：给前端详情页渲染原文/译文/对齐表用
+        # 每段对照详情：给前端详情页渲染原文/译文/对齐表 + 诊断 LLM 降级
         segments_detail = [
             {
                 "index": a.index,
@@ -253,6 +258,9 @@ def run_video_translate(
                 "source_text": segments_raw[i].text,
                 "translated_text": a.text,
                 "untranslated": a.text.startswith("[untranslated] "),
+                # 诊断字段：LLM 实际返回了什么 + 触发了哪条降级规则（若正常则 None）
+                "llm_raw": translate_outcomes[i].llm_raw,
+                "degrade_reason": translate_outcomes[i].degrade_reason,
             }
             for i, a in enumerate(aligned)
         ]
@@ -297,6 +305,14 @@ _LEAK_PATTERNS = (
 )
 
 
+@dataclass(frozen=True)
+class _TranslateOutcome:
+    """单段翻译的结构化输出：最终文本 + LLM 原始响应 + 降级原因。"""
+    final_text: str            # 写入 SRT 的文本（降级时带 [untranslated] 前缀）
+    llm_raw: str | None        # LLM 实际返回（即使被判定为不合格仍保留；空段为 None）
+    degrade_reason: str | None # None = 正常采纳；非空 = 降级原因（4 类之一）
+
+
 def _translate_segments(
     segments, *,
     source_lang: str,
@@ -305,7 +321,7 @@ def _translate_segments(
     llm_chat_fn: LlmChatFn,
     warnings: list[str],
     llm_config: dict,
-) -> list[str]:
+) -> list[_TranslateOutcome]:
     head = system_prompt.strip() if system_prompt else (
         _DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(
             source_lang=source_lang or "auto",
@@ -315,12 +331,12 @@ def _translate_segments(
     system_msg = head + _GUARD_SUFFIX
     model = llm_config.get("model")
 
-    out: list[str] = []
+    out: list[_TranslateOutcome] = []
     for i, seg in enumerate(segments):
         src_text = seg.text.strip()
         if not src_text:
-            out.append("")
             warnings.append(f"segment {i}: empty source, skipped")
+            out.append(_TranslateOutcome("", None, "empty source"))
             continue
         try:
             translated = llm_chat_fn(
@@ -333,14 +349,23 @@ def _translate_segments(
         except LlmApiError as e:
             # 单段 LLM 失败 → 整个 Job 失败（ADR-014 §8.1）
             raise e
-        translated = translated.strip() if translated else ""
+        raw = translated or ""
+        cleaned = raw.strip()
 
-        degraded = _degrade_or_none(translated, src_text)
+        degraded = _degrade_or_none(cleaned, src_text)
         if degraded is not None:
             warnings.append(f"segment {i}: {degraded} — fell back to source text")
-            out.append(f"[untranslated] {src_text}")
+            out.append(_TranslateOutcome(
+                final_text=f"[untranslated] {src_text}",
+                llm_raw=raw,
+                degrade_reason=degraded,
+            ))
         else:
-            out.append(translated)
+            out.append(_TranslateOutcome(
+                final_text=cleaned,
+                llm_raw=raw,
+                degrade_reason=None,
+            ))
     return out
 
 
