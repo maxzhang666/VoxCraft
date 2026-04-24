@@ -216,15 +216,50 @@ def test_list_models_parses_models_key(monkeypatch):
     assert c.list_models() == ["a", "b"]
 
 
-def test_list_models_wraps_exception_and_redacts(monkeypatch):
+def test_list_models_wraps_network_error_and_redacts(monkeypatch):
+    import httpx
+
     _patch_httpx_get(
-        monkeypatch, raise_exc=RuntimeError("401 with sk-leaked-abcdef"),
+        monkeypatch,
+        raise_exc=httpx.ConnectError("DNS fail for sk-leaked-abcdef"),
     )
     c = LlmClient(base_url="http://x", api_key="sk", model="m")
     with pytest.raises(LlmApiError) as ei:
         c.list_models()
+    assert ei.value.code == "LLM_ENDPOINT_UNREACHABLE"
     assert "sk-leaked" not in ei.value.message
-    assert "REDACTED" in ei.value.message
+
+
+def test_list_models_http_error_carries_status(monkeypatch):
+    _patch_httpx_get(
+        monkeypatch, status=401, json_payload={"error": "unauthorized"},
+    )
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    with pytest.raises(LlmApiError) as ei:
+        c.list_models()
+    assert ei.value.code == "LLM_HTTP_ERROR"
+    assert ei.value.details["status"] == 401
+
+
+def test_list_models_non_json_response_gives_hint(monkeypatch):
+    """常见陷阱：base_url 漏了 /v1 → 返回 HTML → 给用户可执行提示。"""
+    import httpx
+
+    def fake_get(url, headers=None, timeout=None):  # noqa: ARG001
+        return httpx.Response(
+            200,
+            content=b"<html><body>not found</body></html>",
+            headers={"content-type": "text/html"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    c = LlmClient(base_url="http://x", api_key="sk", model="m")
+    with pytest.raises(LlmApiError) as ei:
+        c.list_models()
+    assert ei.value.code == "LLM_BAD_RESPONSE"
+    assert "/v1" in ei.value.message  # 提示包含修复方向
 
 
 def test_redact_sk_helper():

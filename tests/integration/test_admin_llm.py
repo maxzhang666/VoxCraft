@@ -124,25 +124,30 @@ def test_probe_models_requires_auth(client):
 
 
 def test_probe_models_upstream_failure(client, monkeypatch):
-    _patch_openai_models(
-        monkeypatch, raise_exc=RuntimeError("401 Unauthorized"),
-    )
+    # 上游 401 → LLM_HTTP_ERROR（LlmApiError 子类，status 仍是 502）
+    _patch_openai_models(monkeypatch, status=401)
     r = client.post(
         "/api/admin/llm/probe-models",
         json={"base_url": "https://x", "api_key": "sk-bad"},
     )
     assert r.status_code == 502
-    assert r.json()["error"]["code"] == "LLM_API_ERROR"
+    assert r.json()["error"]["code"] == "LLM_HTTP_ERROR"
 
 
 # ---------- helper：mock httpx.get（list_models 已改走 httpx 直调） ----------
 
-def _patch_openai_models(monkeypatch, *, ids=None, raise_exc=None):
+def _patch_openai_models(monkeypatch, *, ids=None, raise_exc=None, status=200):
     import httpx
 
     def fake_get(url, headers=None, timeout=None):  # noqa: ARG001
         if raise_exc is not None:
             raise raise_exc
+        if status >= 400:
+            return httpx.Response(
+                status,
+                json={"error": "unauthorized"},
+                request=httpx.Request("GET", url),
+            )
         return httpx.Response(
             200,
             json={"data": [{"id": i} for i in (ids or [])]},

@@ -126,32 +126,58 @@ class LlmClient:
         """调用 OpenAI 兼容 `GET /v1/models`，返回模型 id 列表（已排序）。
 
         不用 openai SDK —— SDK 会用 Pydantic 严格反序列化，遇到 Ollama / vllm /
-        部分 Azure 定制等返回非标准结构（如 data 是 string[] 而非 object[]）就报
-        `'str' object has no attribute '_set_private_attributes'`。
-
-        这里用 httpx 直 GET 然后柔性解析，兼容：
+        部分 Azure 定制等返回非标准结构就报 `_set_private_attributes` 错。
+        这里用 httpx 直 GET + 柔性 JSON 解析，兼容：
         - 标准：`{data: [{id: "..."}]}` （OpenAI）
-        - 对象含 name 而非 id：`{data: [{name: "..."}]}` （部分兼容层）
+        - 对象含 name：`{data: [{name: "..."}]}`
         - 字符串列表：`{data: ["m1", "m2"]}` 或 `{models: ["m1"]}`
 
-        异常统一转 `LlmApiError`，消息经 sk-* redact。
+        错误分层（都包一层 sk-* redact）：
+        - 网络不通 / DNS 失败 → `LLM_ENDPOINT_UNREACHABLE` 提示
+        - HTTP 非 2xx → `LLM_HTTP_ERROR`，附 status 和 body 前 200 字节
+        - 响应非 JSON → `LLM_BAD_RESPONSE`，常见原因是 base_url 没带 /v1
         """
         import httpx
 
         url = self.base_url.rstrip("/") + "/models"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+
         try:
-            r = httpx.get(
-                url,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                timeout=self.timeout,
-            )
-            r.raise_for_status()
-            data = r.json()
-        except BaseException as e:  # noqa: BLE001
+            r = httpx.get(url, headers=headers, timeout=self.timeout)
+        except httpx.HTTPError as e:
             msg = redact_sk(f"{type(e).__name__}: {e}")
             raise LlmApiError(
-                f"LLM list_models failed: {msg}",
-                details={"base_url": self.base_url},
+                f"LLM endpoint unreachable: {msg}",
+                code="LLM_ENDPOINT_UNREACHABLE",
+                details={"base_url": self.base_url, "url": url},
+            ) from None
+
+        if r.status_code >= 400:
+            body_tail = redact_sk(r.text[:200]) if r.text else ""
+            raise LlmApiError(
+                f"LLM /models HTTP {r.status_code}: {body_tail}",
+                code="LLM_HTTP_ERROR",
+                details={
+                    "base_url": self.base_url,
+                    "status": r.status_code,
+                },
+            )
+
+        try:
+            data = r.json()
+        except ValueError:
+            ctype = r.headers.get("content-type", "unknown")
+            raise LlmApiError(
+                f"LLM /models response is not JSON (content-type: {ctype}). "
+                f"请检查 base_url 是否包含 /v1 且端点支持 GET /models",
+                code="LLM_BAD_RESPONSE",
+                details={
+                    "base_url": self.base_url,
+                    "content_type": ctype,
+                },
             ) from None
 
         ids = _extract_model_ids(data)
