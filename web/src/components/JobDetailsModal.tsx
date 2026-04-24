@@ -37,14 +37,23 @@ export function JobDetailsModal({ job, onClose, onRetried }: Props) {
       // 拦截器已提示
     }
   };
+  // 视频翻译详情内容最多（SRT + 播放器 + segments 表），Modal 需要更宽更高
+  // 但限制不能超过视窗；内部滚动避免整页面滚。
+  const isVideo = job?.kind === "video_translate";
   return (
     <Modal
       visible={!!job}
       onCancel={onClose}
       footer={null}
       title={job ? `任务详情 · ${KIND_LABEL[job.kind] ?? job.kind}` : ""}
-      width={720}
+      width={isVideo ? 880 : 720}
       centered
+      bodyStyle={{
+        maxHeight: "72vh",
+        overflowY: "auto",
+        overflowX: "hidden",
+        paddingRight: 8,
+      }}
     >
       {job && (
         <Space vertical align="start" spacing={12} style={{ width: "100%" }}>
