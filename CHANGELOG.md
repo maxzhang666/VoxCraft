@@ -35,7 +35,7 @@ All notable changes to this project will be documented in this file.
 ### Changed — 定位升级（ADR-014 §1）
 
 - 项目定位："音频 AI 推理服务" → **"音视频 AI 推理服务"**
-- 01-positioning / 03-scenarios / 07-deployment / 09-risks / 10-open-source 同步：撤消费方特指（原 Y2A-Auto），改为通用 API 消费方抽象
+- 内部设计规格同步：撤消费方特指，改为通用 API 消费方抽象
 - Dockerfile 运行时层新增 `fonts-noto-cjk`（硬字幕中文渲染）
 - `pyproject.toml` 新增 `ffmpeg-python>=0.2.0`
 
@@ -46,8 +46,6 @@ All notable changes to this project will be documented in this file.
 ### Documentation
 
 - README 加"视频语音级翻译"章节
-- 05-api.md 加 `/video-translate` 端点契约
-- 08-roadmap.md v0.4.0 节点
 
 ### Tests
 
@@ -76,13 +74,11 @@ All notable changes to this project will be documented in this file.
 - 依赖 `openai>=1.50`（加入 main deps）
 
 ### Security
-- **API Key 明文存储于 `data/voxcraft.sqlite`**（自托管设计取舍，见 plans/voxcraft-llm-integration §风险）
+- **API Key 明文存储于 `data/voxcraft.sqlite`**（自托管设计取舍）
 - README / LlmConfig 页面提示用户保护 DB 文件（`chmod 600` + 备份注意）
 
 ### Documentation
 - README 加 "LLM 配置" 章节，列 OpenAI / DeepSeek / Qwen / Ollama 典型 base_url 示例
-- 05-api.md 补 `/admin/llm/*` 完整端点契约
-- 08-roadmap.md 加 v0.3.0 节点
 
 ### Tests
 - 7 个 `test_admin_llm.py` 集成测试（CRUD / api_key 保护 / set-default 互斥）
@@ -157,7 +153,7 @@ All notable changes to this project will be documented in this file.
 
 ## [v0.1.4] — 2026-04-23
 
-### Added — OpenAI 兼容 API 层（[ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md)）
+### Added — OpenAI 兼容 API 层（ADR-012）
 - `POST /v1/audio/transcriptions` 对齐 OpenAI Whisper API；支持 `response_format` ∈ `{json, text, srt, vtt, verbose_json}`
 - `POST /v1/audio/speech` 对齐 OpenAI TTS API；支持 `response_format` ∈ `{mp3, opus, aac, flac, wav, pcm}`
 - 请求校验错误走 OpenAI error envelope `{error:{message,type,code}}`，不再返回 VoxCraft 默认 `{error:{code,message,details}}`（仅限 `/v1/audio/*` 路径）
@@ -174,7 +170,7 @@ All notable changes to this project will be documented in this file.
 ## [v0.1.3] — 2026-04-23
 
 ### Changed — Breaking
-- **业务端点全异步化**（[ADR-011](docs/superpowers/specs/voxcraft/decisions/ADR-011-async-by-default.md)）：`POST /asr | /tts | /tts/clone | /separate` 从"同步返回结果"改为"立即返回 `202 {job_id, status: "pending"}`"。外部调用方需改为订阅 SSE 或轮询 `GET /jobs/{id}` 获取结果。取代 ADR-008 §2 的混合同/异步策略。
+- **业务端点全异步化**（ADR-011）：`POST /asr | /tts | /tts/clone | /separate` 从"同步返回结果"改为"立即返回 `202 {job_id, status: "pending"}`"。外部调用方需改为订阅 SSE 或轮询 `GET /jobs/{id}` 获取结果。取代 ADR-008 §2 的混合同/异步策略。
 
 ### Added
 - `POST /jobs/{id}/retry` — 失败/取消任务复用 `job_id` 重试（ASR/Clone/Separate 需原始上传仍存在）
@@ -199,7 +195,7 @@ All notable changes to this project will be documented in this file.
 - ADR-011 新增；ADR-008 §2 标注 superseded
 - 04-architecture.md / 05-api.md 同步异步语义
 - 02-capabilities.md / 07-deployment.md XTTS → VoxCPM/IndexTTS
-- `plans/archived/voxcraft-v0.1.3-async-and-ux.md` 回溯归档
+- v0.1.3 实施 Plan 回溯归档
 - 08-roadmap.md 勾选完成项 + 新增 v0.1.2 / v0.1.3 节点
 
 ### Tests
@@ -208,8 +204,8 @@ All notable changes to this project will be documented in this file.
 
 ## [v0.1.2] — 2026-04-21
 
-模型库（ModelLibrary）：UI 一键下载 / 管理模型。详见 [ADR-010](docs/superpowers/specs/voxcraft/decisions/ADR-010-model-management.md) 与 `plans/archived/voxcraft-v0.1.2.md`。
+模型库（ModelLibrary）：UI 一键下载 / 管理模型。
 
 ## [v0.1] — 2026-04-19
 
-MVP：FastAPI 后端 + React/Semi 前端，ASR/TTS/Clone/Separate 骨架、全局单任务锁 + LRU=1、SSE、Docker。详见 `plans/archived/voxcraft-mvp-v0.1.md`。
+MVP：FastAPI 后端 + React/Semi 前端，ASR/TTS/Clone/Separate 骨架、全局单任务锁 + LRU=1、SSE、Docker。
