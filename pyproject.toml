@@ -24,6 +24,13 @@ dependencies = [
     "openai>=1.50",
     "ffmpeg-python>=0.2.0",
     "zhconv>=1.4.3",
+    # GPU 支持：
+    # - torch：VoxCPM / IndexTTS / Demucs 系 provider 需要；/health 探测优先用它
+    # - nvidia-ml-py：torch 未加载场景（CPU 部署、mac 开发）下对 GPU 的轻量探测兜底
+    # torch 2.6 默认 PyPI wheel Linux 自带 CUDA 12.4 runtime（向下兼容驱动 ≥ 525）、
+    # mac arm64 自带 CPU/MPS wheel，无需自定义索引。仍支持 Pascal (sm_61)，2.7 才会砍。
+    "torch>=2.6,<2.7",
+    "nvidia-ml-py>=12",
 ]
 
 [project.optional-dependencies]
