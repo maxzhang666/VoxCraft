@@ -13,11 +13,13 @@ Config：
 from __future__ import annotations
 
 from voxcraft.errors import InferenceError, ModelLoadError
+from voxcraft.providers import capabilities
 from voxcraft.providers.base import CloningProvider, ConfigField, ProviderInfo, Voice
 
 
 class IndexTtsProvider(CloningProvider):
     LABEL = "IndexTTS（B 站，非商业）"
+    CAPABILITIES = frozenset({capabilities.CLONE})
     CONFIG_SCHEMA = [
         ConfigField(
             "model_dir", "模型目录", "path", required=True,

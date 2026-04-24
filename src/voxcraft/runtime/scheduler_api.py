@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
 
-Kind = Literal["asr", "tts", "clone", "separate"]
+Kind = Literal["asr", "tts", "clone", "separate", "video_translate"]
 
 
 @dataclass(frozen=True)

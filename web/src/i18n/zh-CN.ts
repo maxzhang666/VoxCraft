@@ -7,6 +7,7 @@ export const t = {
     tts: "语音合成",
     cloning: "语音克隆",
     separator: "人声分离",
+    videoTranslate: "视频翻译",
     settings: "设置",
   },
   settingsNav: {
@@ -22,6 +23,7 @@ export const t = {
     newTts: "新建合成",
     newClone: "新建克隆",
     newSeparate: "新建分离",
+    newVideoTranslate: "新建视频翻译",
     cancel: "取消",
     confirm: "确认",
     submit: "提交",

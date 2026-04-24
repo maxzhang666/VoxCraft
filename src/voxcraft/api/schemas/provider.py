@@ -59,3 +59,4 @@ class ProviderClassSchema(BaseModel):
     label: str
     kind: ProviderKind
     fields: list[ConfigFieldSchema]
+    capabilities: list[str] = Field(default_factory=list)

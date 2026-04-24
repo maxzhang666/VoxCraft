@@ -5,6 +5,7 @@ import {
   IconSong,
   IconUser,
   IconMusic,
+  IconVideoListStroked,
   IconSetting,
 } from "@douyinfe/semi-icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -21,6 +22,11 @@ const NAV_ITEMS = [
   { itemKey: "/tts", text: t.nav.tts, icon: <IconSong /> },
   { itemKey: "/cloning", text: t.nav.cloning, icon: <IconUser /> },
   { itemKey: "/separator", text: t.nav.separator, icon: <IconMusic /> },
+  {
+    itemKey: "/video-translate",
+    text: t.nav.videoTranslate,
+    icon: <IconVideoListStroked />,
+  },
   { itemKey: "/settings", text: t.nav.settings, icon: <IconSetting /> },
 ];
 

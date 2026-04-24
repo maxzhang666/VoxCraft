@@ -2,6 +2,63 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.4.0] — 2026-04-24
+
+### Added — 视频语音级翻译编排（ADR-014）
+
+- `POST /video-translate` 一站式编排端点：上传视频/音频 + `target_lang` → SRT + 译文音频 + 合成视频（视频输入时）
+- 5 阶段串行：ffmpeg demux → ASR → LLM 翻译 → TTS(可选克隆) → ffmpeg mux
+- 参数化 + 14 条前置验证（提交时 422，不入队）：
+  - 文件类型/大小（`VOXCRAFT_MAX_UPLOAD_SIZE` env，默认 2 GiB）
+  - 语言格式、枚举、数值范围（Pydantic）
+  - Provider 存在性 / enabled / kind / 克隆能力（显式 + 默认两条）
+  - LLM 可用性
+- **Provider `CAPABILITIES`** 能力声明机制（`ProviderBase.CAPABILITIES: frozenset[str]`）
+  - 中央常量 `voxcraft.providers.capabilities.CLONE`
+  - VoxCPM / IndexTTS 声明 `{"clone"}`；其余 Provider 空
+  - `GET /admin/providers/classes` 响应附 `capabilities: string[]`
+- **时间轴对齐三模式**（`align_mode`）：
+  - `natural`：译文自然时长
+  - `elastic`（默认）：按原起始点 + 语速压缩 ≤ `align_max_speedup`（默认 1.3）
+  - `strict`：强制贴原段时长（clamp 到 2.0x）
+  - 两阶段对齐：plan（决定 speed）→ TTS → finalize（累计实测时长）
+- **字幕嵌入三模式**（`subtitle_mode`）：`soft`（mov_text 轨道）/ `hard`（烧录）/ `none`
+- **LLM 软降级**（ADR-014 §8.1）：空/markdown/膨胀/元信息泄漏 → 原文回退 + `Job.warnings` 记录 + SRT 标注 `[untranslated]`
+- **护栏固定拼在用户 prompt 之后**（防覆盖）
+- **产物多 key**：`GET /jobs/{id}/output?key=subtitle|audio|video`（主产物视频输入→video，音频输入→audio）
+- `Job.warnings: list` 字段（Alembic 0006）
+- 新模块 `src/voxcraft/video/`：`ffmpeg_io.py` / `alignment.py` / `subtitle.py` / `orchestrator.py`
+- 错误族：`MediaDecodeError` / `InvalidMediaError` / `UploadTooLargeError` / `CloneNotSupportedError` / `CloneNotSupportedDefaultError` / `CloneRefInvalidError` / `InvalidLangError`
+- 前端 `/video-translate` 页：Drawer 上传 + Schema 驱动参数表单（含高级折叠）+ Provider 克隆能力实时校验 + JobCard 三路下载按钮 + 警告展示
+- Sider Nav 新增入口；Dashboard 快捷卡片由 4 格改 5 格
+
+### Changed — 定位升级（ADR-014 §1）
+
+- 项目定位："音频 AI 推理服务" → **"音视频 AI 推理服务"**
+- 01-positioning / 03-scenarios / 07-deployment / 09-risks / 10-open-source 同步：撤消费方特指（原 Y2A-Auto），改为通用 API 消费方抽象
+- Dockerfile 运行时层新增 `fonts-noto-cjk`（硬字幕中文渲染）
+- `pyproject.toml` 新增 `ffmpeg-python>=0.2.0`
+
+### Security
+
+- `source_file` 上传两重大小校验（Content-Length 预检 + 流式写盘累计）
+
+### Documentation
+
+- README 加"视频语音级翻译"章节
+- 05-api.md 加 `/video-translate` 端点契约
+- 08-roadmap.md v0.4.0 节点
+
+### Tests
+
+- `test_capabilities.py` 4 项（常量 / Provider 声明 / API 响应）
+- `test_ffmpeg_io.py` 13 项（probe / extract / mux + 参数校验）
+- `test_alignment.py` 15 项（三模式 / finalize / wav_duration）
+- `test_video_orchestrator.py` 10 项（产物 / 进度 / 软降级 / LRU）
+- `test_video_translate_api.py` 18 项（14 条前置验证覆盖）
+- `test_video_translate_e2e.py`（slow，环境变量控制）
+- 覆盖率：baseline 170 → 230 passed（+60 项）
+
 ## [v0.3.0] — 2026-04-23
 
 ### Added — LLM 接入基建

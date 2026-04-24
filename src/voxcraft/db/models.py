@@ -56,6 +56,7 @@ class Job(SQLModel, table=True):
     source_path: str | None = None  # 用户上传的原始音频；成功/失败均保留，供重试
     output_path: str | None = None
     output_extras: dict | None = Field(default=None, sa_column=Column(JSON))
+    warnings: list | None = Field(default=None, sa_column=Column(JSON))  # 软降级记录（v0.4.0 / ADR-014）
     error_code: str | None = None
     error_message: str | None = None
     progress: float = Field(default=0.0)

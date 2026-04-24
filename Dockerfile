@@ -26,7 +26,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl ffmpeg libsndfile1 \
+      ca-certificates curl ffmpeg libsndfile1 fonts-noto-cjk \
  && rm -rf /var/lib/apt/lists/*
 
 # uv 作为 Python 安装器 + 依赖管理器

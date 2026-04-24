@@ -68,6 +68,7 @@ def list_provider_classes(kind: str | None = None) -> list[ProviderClassSchema]:
                     )
                     for f in cls.CONFIG_SCHEMA
                 ],
+                capabilities=sorted(cls.CAPABILITIES),
             )
         )
     return out

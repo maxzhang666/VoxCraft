@@ -74,6 +74,9 @@ class Provider(ABC):
     LABEL: ClassVar[str] = ""
     # 驱动前端动态表单的 config 字段声明
     CONFIG_SCHEMA: ClassVar[list[ConfigField]] = []
+    # 能力声明（ADR-014）。常量见 voxcraft.providers.capabilities。
+    # 供编排层前置验证（如 /video-translate 检查 TTS 是否支持 "clone"）。
+    CAPABILITIES: ClassVar[frozenset[str]] = frozenset()
 
     def __init__(self, name: str, config: dict) -> None:
         self.name = name

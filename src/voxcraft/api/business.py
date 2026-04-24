@@ -262,31 +262,46 @@ async def run_job(job_id: str, app_state) -> None:
         if job.status != "pending":
             log.warning("run_job.bad_status", job_id=job_id, status=job.status)
             return
-        p_row = session.exec(
-            select(Provider).where(
-                Provider.kind == _kind_to_provider_kind(kind),
-                Provider.name == job.provider_name,
-                Provider.enabled == True,  # noqa: E712
-            )
-        ).first()
-        if p_row is None:
-            await _finalize_failure(
-                bus, job_id, kind,
-                code="PROVIDER_NOT_FOUND",
-                message=f"Provider disappeared: {job.provider_name}",
-            )
-            return
 
-        req = JobRequest(
-            job_id=job_id,
-            kind=kind,  # type: ignore[arg-type]
-            provider_name=p_row.name,
-            class_name=p_row.class_name,
-            provider_config=dict(p_row.config or {}),
-            request_meta=dict(job.request or {}),
-            source_path=job.source_path,
-            output_dir=str(_outputs_dir()),
-        )
+        if kind == "video_translate":
+            # 视频翻译是多 Provider 编排，绕开单 Provider 查询路径
+            from voxcraft.api.video_translate import build_video_translate_request
+
+            try:
+                req = build_video_translate_request(
+                    session, job, str(_outputs_dir()),
+                )
+            except VoxCraftError as e:
+                await _finalize_failure(
+                    bus, job_id, kind, code=e.code, message=e.message,
+                )
+                return
+        else:
+            p_row = session.exec(
+                select(Provider).where(
+                    Provider.kind == _kind_to_provider_kind(kind),
+                    Provider.name == job.provider_name,
+                    Provider.enabled == True,  # noqa: E712
+                )
+            ).first()
+            if p_row is None:
+                await _finalize_failure(
+                    bus, job_id, kind,
+                    code="PROVIDER_NOT_FOUND",
+                    message=f"Provider disappeared: {job.provider_name}",
+                )
+                return
+
+            req = JobRequest(
+                job_id=job_id,
+                kind=kind,  # type: ignore[arg-type]
+                provider_name=p_row.name,
+                class_name=p_row.class_name,
+                provider_config=dict(p_row.config or {}),
+                request_meta=dict(job.request or {}),
+                source_path=job.source_path,
+                output_dir=str(_outputs_dir()),
+            )
 
         job.status = "running"
         job.started_at = datetime.now(UTC)
@@ -316,6 +331,19 @@ async def run_job(job_id: str, app_state) -> None:
         return
 
     await _finalize_success(bus, job_id, kind, result, req)
+
+
+async def _finalize_video_translate_warnings(job_id: str, warnings: list[str]) -> None:
+    """把 orchestrator 返回的软降级 warnings 写入 Job.warnings。"""
+    if not warnings:
+        return
+    with Session(get_engine()) as session:
+        j = session.get(Job, job_id)
+        if j is None:
+            return
+        j.warnings = warnings
+        session.add(j)
+        session.commit()
 
 
 def _kind_to_provider_kind(kind: str) -> str:
@@ -370,6 +398,12 @@ async def _finalize_success(
                     )
                 )
             j.request = {**(j.request or {}), "voice_id": result.voice_id}
+
+        # video_translate：把 result["warnings"] 写入 Job.warnings
+        if kind == "video_translate" and result.result:
+            warns = result.result.get("warnings")
+            if isinstance(warns, list) and warns:
+                j.warnings = list(warns)
 
         j.status = "succeeded"
         j.result = result.result

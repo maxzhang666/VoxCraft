@@ -12,6 +12,7 @@ const KIND_LABEL: Record<string, string> = {
   tts: "语音合成",
   clone: "语音克隆",
   separate: "人声分离",
+  video_translate: "视频翻译",
 };
 
 interface Props {
@@ -72,6 +73,23 @@ export function JobDetailsModal({ job, onClose, onRetried }: Props) {
               },
             ]}
           />
+
+          {job.warnings && job.warnings.length > 0 && (
+            <div style={{ width: "100%" }}>
+              <Text type="warning" strong>
+                警告（{job.warnings.length} 条）
+              </Text>
+              <ul style={{ marginTop: 4, paddingLeft: 20 }}>
+                {job.warnings.map((w, i) => (
+                  <li key={i}>
+                    <Text type="warning" size="small">
+                      {w}
+                    </Text>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {job.error_code && (
             <div style={{ width: "100%" }}>

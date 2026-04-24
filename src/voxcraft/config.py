@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     preferred_source: str = "hf"  # hf / ms — 国内用户建议改 ms
     # ADR-013 预留扩展点：inprocess=当前单进程调度；pool=worker 子进程，支持真取消
     scheduler_backend: Literal["inprocess", "pool"] = "inprocess"
+    # /video-translate 上传大小上限（字节）。默认 2 GiB。ADR-014 §2。
+    max_upload_size: int = 2 * 1024**3
 
 
 @lru_cache(maxsize=1)

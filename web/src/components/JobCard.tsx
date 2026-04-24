@@ -95,6 +95,44 @@ function KindActions({ job, onDelete }: Props) {
           <DeleteButton id={job.id} onDelete={onDelete} />
         </Space>
       );
+    case "video_translate": {
+      const extras = job.output_extras ?? {};
+      const hasVideo = !!extras["video"];
+      return (
+        <Space>
+          <Button
+            size="small"
+            disabled={disabled}
+            onClick={() =>
+              window.open(jobOutputUrl(job.id, "subtitle"), "_blank")
+            }
+          >
+            字幕
+          </Button>
+          <Button
+            size="small"
+            disabled={disabled}
+            onClick={() =>
+              window.open(jobOutputUrl(job.id, "audio"), "_blank")
+            }
+          >
+            译文音频
+          </Button>
+          {hasVideo && (
+            <Button
+              size="small"
+              disabled={disabled}
+              onClick={() =>
+                window.open(jobOutputUrl(job.id, "video"), "_blank")
+              }
+            >
+              合成视频
+            </Button>
+          )}
+          <DeleteButton id={job.id} onDelete={onDelete} />
+        </Space>
+      );
+    }
   }
 }
 

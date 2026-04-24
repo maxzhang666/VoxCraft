@@ -27,7 +27,12 @@ export type ProviderUpdate = Partial<
   Pick<Provider, "config" | "is_default" | "enabled">
 >;
 
-export type JobKind = "asr" | "tts" | "clone" | "separate";
+export type JobKind =
+  | "asr"
+  | "tts"
+  | "clone"
+  | "separate"
+  | "video_translate";
 
 export type JobStatus =
   | "pending"
@@ -52,6 +57,31 @@ export interface Job {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  warnings?: string[] | null;
+}
+
+// ---------- 视频语音级翻译（v0.4.0 / ADR-014） ----------
+
+export type SubtitleMode = "soft" | "hard" | "none";
+export type AlignMode = "elastic" | "natural" | "strict";
+
+export interface VideoTranslateSubmitParams {
+  source_file: File;
+  target_lang: string;
+  source_lang?: string;
+  subtitle_mode?: SubtitleMode;
+  clone_voice?: boolean;
+  align_mode?: AlignMode;
+  align_max_speedup?: number;
+  asr_provider_id?: number;
+  tts_provider_id?: number;
+  llm_provider_id?: number;
+  system_prompt?: string;
+}
+
+export interface JobSubmitResponse {
+  job_id: string;
+  status: JobStatus;
 }
 
 export interface AsrSegment {
@@ -160,6 +190,7 @@ export interface ProviderClassSchema {
   label: string;
   kind: ProviderKind;
   fields: ConfigFieldSchema[];
+  capabilities: string[];
 }
 
 // ---------- LLM Provider（v0.3.0） ----------

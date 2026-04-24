@@ -71,6 +71,12 @@ def run(
     emit_event(dict)：可选事件回调；当前 `_run_asr` 会利用它推 `job_progress`。
     """
     try:
+        # video_translate 是多 Provider 编排（ASR + TTS + LLM），不走通用
+        # instantiate 路径；orchestrator 内部按需 ensure_loaded(asr) → (tts)。
+        if req.kind == "video_translate":
+            from voxcraft.video.orchestrator import run_video_translate
+            return run_video_translate(req, lru, emit_event)
+
         inst = instantiate(
             req.class_name, name=req.provider_name, config=req.provider_config,
         )

@@ -7,6 +7,7 @@ import { CloningPage } from "@/pages/cloning/CloningPage";
 import { Dashboard } from "@/pages/Dashboard";
 import { SeparatorPage } from "@/pages/separator/SeparatorPage";
 import { TtsPage } from "@/pages/tts/TtsPage";
+import { VideoTranslatePage } from "@/pages/video-translate/VideoTranslatePage";
 import { GlobalJobsQueue } from "@/pages/settings/GlobalJobsQueue";
 import { LlmConfig } from "@/pages/settings/LlmConfig";
 import { ModelsLibrary } from "@/pages/settings/ModelsLibrary";
@@ -23,6 +24,7 @@ export const router = createBrowserRouter([
       { path: "tts", element: <TtsPage /> },
       { path: "cloning", element: <CloningPage /> },
       { path: "separator", element: <SeparatorPage /> },
+      { path: "video-translate", element: <VideoTranslatePage /> },
       {
         path: "settings",
         element: <SettingsLayout />,

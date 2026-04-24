@@ -64,6 +64,47 @@ audio.stream_to_file("out.mp3")
 
 Clone / Separate 不在 OpenAI 标准内，请用 VoxCraft 原生异步端点。详见 [ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md)。
 
+### 视频语音级翻译（v0.4.0 起）
+
+一站式编排端点，用户上传视频/音频 + 目标语言，VoxCraft 串 ASR → LLM 翻译 → TTS (可选克隆) → ffmpeg mux，一次产出 **字幕 + 译文音频 + 合成视频**（纯音频输入时无视频产物）。
+
+```bash
+curl -X POST http://voxcraft.local:8001/video-translate \
+  -F "source_file=@lecture.mp4" \
+  -F "target_lang=zh" \
+  -F "subtitle_mode=soft" \
+  -F "clone_voice=true" \
+  -F "align_mode=elastic"
+# → 202 {"job_id": "...", "status": "pending"}
+```
+
+产物（通过 `GET /jobs/{id}/output?key=...`）：
+
+| key | 内容 | 说明 |
+|-----|------|------|
+| `subtitle` | 译文 SRT | 总是产出 |
+| `audio` | 译文音频（wav） | 总是产出 |
+| `video` | 合成视频（按 `subtitle_mode` 嵌字幕） | 仅视频输入存在 |
+
+**关键参数**（详见 [ADR-014](docs/superpowers/specs/voxcraft/decisions/ADR-014-video-translate-orchestration.md)）：
+
+- `target_lang`（必填）/ `source_lang`（可选，留空则 ASR 自动识别）
+- `subtitle_mode: soft | hard | none`（软字幕 / 烧录 / 不嵌）
+- `clone_voice: bool`（默认 true；需要支持克隆的 TTS Provider，如 VoxCPM）
+- `align_mode: elastic | natural | strict`（时间轴策略）
+- `align_max_speedup: float ∈ [1.0, 2.0]`（elastic 专用）
+- `asr_provider_id / tts_provider_id / llm_provider_id`（可选，留空用默认）
+- `system_prompt`（≤ 2000 字符，覆盖内置 prompt；系统护栏会强制拼在其后）
+
+**前置依赖**：
+- 需配置至少一个 LLM（设置 → LLM 配置，或通过 `POST /admin/llm`），否则 `LLM_NOT_CONFIGURED`
+- 启用克隆需 TTS Provider 声明 `capabilities: ["clone"]`
+- 系统需安装 `ffmpeg`（Docker 镜像已预装；本地开发 `brew install ffmpeg` / `apt install ffmpeg fonts-noto-cjk`）
+
+**上传大小**：默认 2 GiB 上限，可通过 `VOXCRAFT_MAX_UPLOAD_SIZE` env 调整（字节）。
+
+UI：设置页面左侧 Sider → 视频翻译，拖拽上传后填写参数即可。
+
 ### LLM 配置（v0.3.0 起）
 
 翻译 / 摘要 / 字幕润色等文字能力由外部 LLM API 驱动。在设置 → LLM 配置页新增端点（支持任何 OpenAI 兼容协议）：
