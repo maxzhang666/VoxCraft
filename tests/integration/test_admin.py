@@ -118,7 +118,7 @@ def test_list_classes_returns_schema(client):
     assert whisper["kind"] == "asr"
     assert whisper["label"]
     field_keys = {f["key"] for f in whisper["fields"]}
-    assert {"model_path", "compute_type", "device"} == field_keys
+    assert {"model_path", "compute_type", "device", "simplify_chinese"} == field_keys
     compute_type = next(f for f in whisper["fields"] if f["key"] == "compute_type")
     assert compute_type["type"] == "enum"
     assert compute_type["options"] == ["int8", "fp16", "fp32"]

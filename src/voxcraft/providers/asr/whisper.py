@@ -4,6 +4,8 @@ Config 字段（全部可选，除 model_path 外）：
 - model_path: str         本地目录 或 HF repo id，如 "Systran/faster-whisper-medium"
 - compute_type: str       默认 "int8"
 - device: str             默认 "cpu"（"cuda"/"auto" 可用）
+- simplify_chinese: str   "true"/"false"；默认 "true"；中文识别结果自动转简体
+                          （Whisper 训练语料以繁体居多，language=zh 也不保证简体）
 """
 from __future__ import annotations
 
@@ -15,6 +17,20 @@ from voxcraft.providers.base import (
     ConfigField,
     ProviderInfo,
 )
+
+
+def _to_simplified(text: str) -> str:
+    """用 zhconv 把繁体转简体；不含中文字符的 text 直接返回。"""
+    if not text:
+        return text
+    # 快速过滤：无中文字符时跳过，避免无谓调用
+    if not any("一" <= ch <= "鿿" for ch in text):
+        return text
+    try:
+        import zhconv
+        return zhconv.convert(text, "zh-cn")
+    except Exception:  # noqa: BLE001
+        return text  # 转换失败退化为原文，不影响主流程
 
 
 class WhisperProvider(AsrProvider):
@@ -31,6 +47,11 @@ class WhisperProvider(AsrProvider):
         ConfigField(
             "device", "设备", "enum",
             options=("auto", "cpu", "cuda"), default="auto",
+        ),
+        ConfigField(
+            "simplify_chinese", "中文自动简体化", "enum",
+            options=("true", "false"), default="true",
+            help="Whisper 训练语料中文多为繁体；开启后对 language=zh 的结果做 zhconv 转换",
         ),
     ]
 
@@ -93,10 +114,15 @@ class WhisperProvider(AsrProvider):
                 audio_path, language=language
             )
             duration = whisper_info.duration or 0.0
+            simplify = (
+                (whisper_info.language or "").lower() == "zh"
+                and str(self.config.get("simplify_chinese", "true")).lower() == "true"
+            )
             segments: list[AsrSegment] = []
             # faster-whisper 的 segments 是 generator——逐个汇报进度
             for s in segments_iter:
-                segments.append(AsrSegment(start=s.start, end=s.end, text=s.text))
+                text = _to_simplified(s.text) if simplify else s.text
+                segments.append(AsrSegment(start=s.start, end=s.end, text=text))
                 if progress_cb is not None and duration > 0:
                     try:
                         progress_cb(min(1.0, s.end / duration))

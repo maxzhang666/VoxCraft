@@ -23,6 +23,7 @@ dependencies = [
     "modelscope>=1.36.1",
     "openai>=1.50",
     "ffmpeg-python>=0.2.0",
+    "zhconv>=1.4.3",
 ]
 
 [project.optional-dependencies]
