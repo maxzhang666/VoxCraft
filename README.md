@@ -1,72 +1,111 @@
+<div align="center">
+
 # VoxCraft
 
-自托管多模态音频推理服务：ASR / TTS / 声纹克隆 / 人声分离。
+**Self-hosted AI inference service for audio & video.**
 
-**定位**：非商业自托管（家庭/内部/个人研究）。参见 [设计 Spec](docs/superpowers/specs/voxcraft/README.md)。
+Speech recognition · Text-to-speech · Voice cloning · Vocal separation · Video translation — behind one OpenAI-compatible HTTP surface and a first-class web UI.
 
-## 能力
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](pyproject.toml)
+[![Docker: GHCR](https://img.shields.io/badge/docker-ghcr.io-2496ED.svg)](https://github.com/features/packages)
+[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue.svg)](.github/workflows/docker-build.yml)
 
-| 能力 | API 端点 | 默认 Provider |
-|------|---------|---------------|
-| 语音识别 | `POST /asr` | faster-whisper |
-| 语音合成 | `POST /tts` | Piper |
-| 声纹克隆 | `POST /tts/clone` | VoxCPM / IndexTTS |
-| 人声分离 | `POST /separate` | Demucs |
-| 管理 UI | `GET /ui/` | React + Semi |
+[English](README.md) · [简体中文](README_CN.md)
 
-### 异步语义（v0.1.3 起）
+</div>
 
-所有业务端点**提交即返回**，真正执行由后台 runner 调度：
+---
+
+## Why VoxCraft
+
+Commercial audio-AI platforms (ElevenLabs, OpenAI TTS, Descript) are powerful but come with three costs: **monthly bills, uploaded recordings leaving your network, and vendor-controlled models**. VoxCraft runs the same class of capabilities on your own hardware:
+
+- **Self-hosted by default** — every model runs locally; no egress required
+- **Open weights only** — pick your own model library, swap implementations per capability
+- **Cost-aware by design** — audio/video inference runs locally (cheap after one-time setup); text tasks (translation, summarization) delegate to any OpenAI-compatible LLM endpoint (tokens are cheap, model ops aren't)
+- **API first, UI equal** — HTTP endpoints for automation; a web UI that is a true workspace, not a dashboard
+
+License note: the code is MIT. Integrated model weights carry their own terms (some, such as IndexTTS, are non-commercial). Intended for personal, research, and internal-network use.
+
+## Capabilities
+
+| Capability | Endpoint | Default Provider | Notes |
+|-----------|----------|------------------|-------|
+| Speech recognition (ASR) | `POST /asr` | faster-whisper | Timestamps, multilingual |
+| Text-to-speech (TTS) | `POST /tts` | Piper | CPU-friendly |
+| Voice cloning | `POST /tts/clone` | VoxCPM / IndexTTS | Zero-shot from reference audio |
+| Vocal separation | `POST /separate` | Demucs | Vocals + instrumental stems |
+| **Video translation** | `POST /video-translate` | ASR + LLM + TTS + ffmpeg | One-shot subtitle / dubbed audio / composed video |
+| OpenAI-compatible layer | `POST /v1/audio/{transcriptions,speech}` | — | Drop-in for OpenAI SDK clients |
+| Admin web UI | `GET /ui/` | React + Semi Design | First-class interactive entry point |
+
+## Quick Start
+
+Pull the pre-built image from GHCR (published by CI on every push to `master`):
+
+```bash
+docker run -d --name voxcraft \
+  --gpus all \
+  -p 8001:8001 \
+  -v $(pwd)/models:/models \
+  -v $(pwd)/data:/data \
+  ghcr.io/OWNER/voxcraft:latest
+```
+
+Replace `OWNER` with the GitHub user/org hosting this fork. Then:
+
+- UI → http://localhost:8001/
+- OpenAPI docs → http://localhost:8001/docs
+- Health → http://localhost:8001/health
+
+See [Deployment](#deployment) for `docker compose`, CPU-only, and production notes.
+
+## Asynchronous API
+
+All business endpoints return **`202 Accepted` immediately**. The actual inference runs in a serial background queue (single-task by design; see [ADR-008](docs/superpowers/specs/voxcraft/decisions/ADR-008-concurrency.md)) and is driven by a scheduler (in-process or subprocess pool; see [ADR-013](docs/superpowers/specs/voxcraft/decisions/ADR-013-process-pool-cancel.md)).
 
 ```
-POST /asr | /tts | /tts/clone | /separate
+POST /asr | /tts | /tts/clone | /separate | /video-translate
   → 202 Accepted
-  { "job_id": "uuid", "status": "pending" }
+  { "job_id": "...", "status": "pending" }
 ```
 
-获取结果的两条路径：
+Two ways to obtain results:
 
-1. **订阅 SSE** `GET /admin/events`（推荐）——监听 `job_status_changed`，收到 `succeeded` 时再拉详情
-2. **轮询** `GET /jobs/{id}` 直到 `status ∈ {succeeded, failed, cancelled}`
+1. **Subscribe to SSE** at `GET /admin/events` and watch for `job_status_changed` transitions to `succeeded` — then fetch details (recommended for UIs)
+2. **Poll** `GET /jobs/{id}` until `status ∈ {succeeded, failed, cancelled}`
 
-产物下载：`GET /jobs/{id}/output`（或 `?key=vocals` / `?key=instrumental` 多产物场景）。
+Artifacts are served via `GET /jobs/{id}/output` (single product) or `GET /jobs/{id}/output?key=<name>` (multi-product, e.g. `vocals` / `instrumental` / `subtitle` / `audio` / `video`).
 
-失败任务支持 `POST /jobs/{id}/retry` 复用同一 `job_id` 重试（ASR/Clone/Separate 需原始上传仍在磁盘）。
+Failed jobs can be re-queued with `POST /jobs/{id}/retry` (the same `job_id` is reused; the original upload must still be on disk). Full contract: [05-api.md](docs/superpowers/specs/voxcraft/05-api.md), [ADR-011](docs/superpowers/specs/voxcraft/decisions/ADR-011-async-by-default.md).
 
-详见 [ADR-011](docs/superpowers/specs/voxcraft/decisions/ADR-011-async-by-default.md) 与 [05-api.md](docs/superpowers/specs/voxcraft/05-api.md)。
+## OpenAI-Compatible Endpoints
 
-### OpenAI 兼容 API（v0.1.4 起）
-
-无状态客户端（CLI、SDK、AI 编排工具）可直接用 OpenAI 协议访问 ASR / TTS：
-
-```http
-POST /v1/audio/transcriptions   # 对齐 OpenAI Whisper
-POST /v1/audio/speech           # 对齐 OpenAI TTS
-```
-
-HTTP 层同步返回（内核仍异步；入口等到 Job 终态再回包），默认超时 10 分钟。每个响应带 `X-VoxCraft-Job-Id` 头便于追溯。
+For stateless clients (CLIs, SDKs, orchestration tools), VoxCraft exposes a synchronous façade that speaks the OpenAI audio schema:
 
 ```python
 from openai import OpenAI
+
 client = OpenAI(base_url="http://voxcraft.local:8001/v1", api_key="sk-local")
 
-# ASR（多种 response_format：json / text / srt / vtt / verbose_json）
+# Transcription — supports json / text / srt / vtt / verbose_json
 with open("sample.mp3", "rb") as f:
     r = client.audio.transcriptions.create(model="whisper-1", file=f)
     print(r.text)
 
-# TTS
-audio = client.audio.speech.create(model="tts-1", voice="alloy", input="你好")
+# Speech synthesis
+audio = client.audio.speech.create(model="tts-1", voice="alloy", input="Hello, world.")
 audio.stream_to_file("out.mp3")
 ```
 
-错误响应走 OpenAI envelope：`{"error": {"message", "type", "code"}}`。
+The HTTP layer blocks until the job reaches a terminal state (default timeout 10 minutes). Every response carries an `X-VoxCraft-Job-Id` header so the equivalent native `/jobs/{id}` record can be queried. Errors follow the OpenAI envelope: `{"error": {"message", "type", "code"}}`.
 
-Clone / Separate 不在 OpenAI 标准内，请用 VoxCraft 原生异步端点。详见 [ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md)。
+Voice cloning and vocal separation have no OpenAI standard; use the native async endpoints. Full contract: [ADR-012](docs/superpowers/specs/voxcraft/decisions/ADR-012-openai-compat.md).
 
-### 视频语音级翻译（v0.4.0 起）
+## Video Translation (v0.4.0)
 
-一站式编排端点，用户上传视频/音频 + 目标语言，VoxCraft 串 ASR → LLM 翻译 → TTS (可选克隆) → ffmpeg mux，一次产出 **字幕 + 译文音频 + 合成视频**（纯音频输入时无视频产物）。
+A single orchestrated endpoint that converts a spoken-language video or audio file into the target language — producing subtitles, dubbed audio, and a composed video in one request.
 
 ```bash
 curl -X POST http://voxcraft.local:8001/video-translate \
@@ -75,135 +114,158 @@ curl -X POST http://voxcraft.local:8001/video-translate \
   -F "subtitle_mode=soft" \
   -F "clone_voice=true" \
   -F "align_mode=elastic"
-# → 202 {"job_id": "...", "status": "pending"}
+# → 202 { "job_id": "...", "status": "pending" }
 ```
 
-产物（通过 `GET /jobs/{id}/output?key=...`）：
+Artifacts (always produced when applicable; retrieved via `GET /jobs/{id}/output?key=<name>`):
 
-| key | 内容 | 说明 |
-|-----|------|------|
-| `subtitle` | 译文 SRT | 总是产出 |
-| `audio` | 译文音频（wav） | 总是产出 |
-| `video` | 合成视频（按 `subtitle_mode` 嵌字幕） | 仅视频输入存在 |
+| Key | Contents | Availability |
+|-----|----------|--------------|
+| `subtitle` | Translated SRT | Always |
+| `audio` | Translated dubbed audio (wav) | Always |
+| `video` | Composed video with replaced audio and embedded subtitles | Video input only |
 
-**关键参数**（详见 [ADR-014](docs/superpowers/specs/voxcraft/decisions/ADR-014-video-translate-orchestration.md)）：
+Key parameters (full reference in [ADR-014](docs/superpowers/specs/voxcraft/decisions/ADR-014-video-translate-orchestration.md)):
 
-- `target_lang`（必填）/ `source_lang`（可选，留空则 ASR 自动识别）
-- `subtitle_mode: soft | hard | none`（软字幕 / 烧录 / 不嵌）
-- `clone_voice: bool`（默认 true；需要支持克隆的 TTS Provider，如 VoxCPM）
-- `align_mode: elastic | natural | strict`（时间轴策略）
-- `align_max_speedup: float ∈ [1.0, 2.0]`（elastic 专用）
-- `asr_provider_id / tts_provider_id / llm_provider_id`（可选，留空用默认）
-- `system_prompt`（≤ 2000 字符，覆盖内置 prompt；系统护栏会强制拼在其后）
+- `target_lang` (required), `source_lang` (optional; ASR auto-detects if omitted)
+- `subtitle_mode`: `soft` (muxed subtitle track) · `hard` (burned into frames) · `none`
+- `clone_voice` (default `true`): reuses the original speaker's voice via a cloning-capable TTS provider
+- `align_mode`: `elastic` (default) · `natural` · `strict` — controls how translated speech is fit against the source timeline
+- `align_max_speedup` ∈ [1.0, 2.0] (elastic only)
+- Provider overrides: `asr_provider_id` / `tts_provider_id` / `llm_provider_id`
+- `system_prompt` (≤ 2000 chars) — custom translation prompt; built-in safety suffix is always appended
 
-**前置依赖**：
-- 需配置至少一个 LLM（设置 → LLM 配置，或通过 `POST /admin/llm`），否则 `LLM_NOT_CONFIGURED`
-- 启用克隆需 TTS Provider 声明 `capabilities: ["clone"]`
-- 系统需安装 `ffmpeg`（Docker 镜像已预装；本地开发 `brew install ffmpeg` / `apt install ffmpeg fonts-noto-cjk`）
+Prerequisites:
 
-**上传大小**：默认 2 GiB 上限，可通过 `VOXCRAFT_MAX_UPLOAD_SIZE` env 调整（字节）。
+- At least one LLM provider configured (Settings → LLM, or `POST /admin/llm`) — otherwise `LLM_NOT_CONFIGURED`
+- For cloning, the selected TTS provider must declare the `clone` capability (VoxCPM, IndexTTS)
+- System `ffmpeg` must be available (pre-installed in the Docker image; `brew install ffmpeg` / `apt install ffmpeg fonts-noto-cjk` for local development)
 
-UI：设置页面左侧 Sider → 视频翻译，拖拽上传后填写参数即可。
+Upload size cap: **2 GiB** by default; configurable via `VOXCRAFT_MAX_UPLOAD_SIZE` (bytes).
 
-### LLM 配置（v0.3.0 起）
+## LLM Configuration (v0.3.0)
 
-翻译 / 摘要 / 字幕润色等文字能力由外部 LLM API 驱动。在设置 → LLM 配置页新增端点（支持任何 OpenAI 兼容协议）：
+Text tasks (translation, summarization, subtitle polishing) delegate to any OpenAI-compatible endpoint. Configure providers in the UI (Settings → LLM Config) or via `POST /admin/llm`:
 
-| 场景 | Base URL | 示例 Model |
-|------|----------|-----------|
+| Scenario | Base URL | Example model |
+|----------|----------|---------------|
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
 | DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| Qwen（阿里云） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` |
-| 本地 Ollama | `http://localhost:11434/v1` | `qwen2.5:7b` |
+| Qwen (Aliyun DashScope) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` |
+| Ollama (local) | `http://localhost:11434/v1` | `qwen2.5:7b` |
 
-**安全提示**：API Key **明文存储于 `data/voxcraft.sqlite`**（自托管场景简化设计）。请自行保护数据库文件：`chmod 600 data/voxcraft.sqlite`，备份也注意不上传到公共位置。
+> **Security**: API keys are stored **in plaintext** in `data/voxcraft.sqlite` (self-hosted trade-off). Protect the database file: `chmod 600 data/voxcraft.sqlite`, and exclude it from shared backups.
 
-## 部署（Docker）
+## Deployment
 
-### 前置
+### Prerequisites
 
-- Linux（推荐 Ubuntu 22.04 / Debian 12）
-- NVIDIA GPU + 驱动 ≥ 535
+- Linux (Ubuntu 22.04 / Debian 12 recommended)
+- NVIDIA GPU + driver ≥ 535 (CPU-only deployment is supported with reduced throughput)
 - `docker` + `docker compose` + `nvidia-container-toolkit`
 
-### 启动
+### docker compose
 
 ```bash
 git clone <repo> voxcraft
 cd voxcraft
 
-# 环境变量模板
 cp .env.example .env
-# 按需编辑 .env（如 OPENAI_API_KEY，用于未来翻译能力）
+# edit .env as needed
 
-# 下载模型到 ./models/（按需，Mock 测试可跳过）
+# download models into ./models/ (skip for mock-only testing)
 bash scripts/download_models.sh
 
-# 一键启动（首次构建约 5-10 分钟）
 docker compose up -d
-
-# 查看日志
 docker compose logs -f voxcraft
 ```
 
-访问：
-- UI：`http://<host>:8001/`（自动重定向到 `/ui/`）
-- API 文档：`http://<host>:8001/docs`
-- 健康：`http://<host>:8001/health`
+Endpoints:
 
-### 无 GPU 环境
+- UI: `http://<host>:8001/` (auto-redirects to `/ui/`)
+- OpenAPI: `http://<host>:8001/docs`
+- Health: `http://<host>:8001/health`
 
-编辑 `docker-compose.yml`，注释 `deploy.resources.reservations` 整段；Whisper 可用 CPU（`compute_type=int8`，速度变慢）。
+### CPU-only
 
-### 数据持久化
+Comment out `deploy.resources.reservations` in `docker-compose.yml`. Whisper falls back to int8 on CPU (slower but functional).
 
-- `./models/` → 容器内 `/models`（模型权重）
-- `./data/` → 容器内 `/data`（SQLite + 产物音频）
+### Persistence
 
-容器重启数据不丢失；删除 `./data/` 即清空所有配置与历史。
+- `./models/` → `/models` (model weights)
+- `./data/` → `/data` (SQLite config + job artifacts)
 
-## 开发（本地）
+Delete `./data/` to reset all state.
 
-### 后端
+## Development
+
+### Backend
 
 ```bash
 uv sync --all-extras
 uv run uvicorn voxcraft.main:app --reload --port 8001
 ```
 
-### 前端
+### Frontend
 
 ```bash
 cd web
 pnpm install
-pnpm dev          # Vite 开发服务器（:5173 代理 API 到 :8001）
+pnpm dev          # Vite dev server on :5173, API proxied to :8001
 ```
 
-### 测试
+### Tests
 
 ```bash
-uv run pytest -v -m "not slow"        # 单元 + 集成
-uv run pytest -v -m slow              # 含真模型 E2E（需模型文件）
-cd web && pnpm build                  # 前端类型 + 生产构建
+uv run pytest -v -m "not slow"        # unit + integration (~10s)
+uv run pytest -v -m slow              # incl. real-model E2E (requires weights)
+cd web && pnpm build                  # TS check + production bundle
 ```
 
-## 项目结构
+## Project Layout
 
 ```
 voxcraft/
-├── pyproject.toml       # Python 依赖（uv 管理）
-├── Dockerfile           # 多阶段：Node 构建 + Python CUDA 运行时
-├── docker-compose.yml   # 一键启动
-├── src/voxcraft/        # 后端
-├── web/                 # 前端 (React + Semi + Vite)
-├── migrations/          # Alembic
-├── scripts/             # 模型下载等
-├── tests/               # unit / integration / e2e
-└── docs/                # 设计 Spec + Plan（本地沉淀，不入 git）
+├── pyproject.toml          # Python dependencies (uv managed)
+├── Dockerfile              # Multi-stage: Node frontend → Python CUDA runtime
+├── docker-compose.yml
+├── src/voxcraft/           # Backend
+│   ├── api/                #   REST + OpenAI-compatible + SSE
+│   ├── providers/          #   ASR / TTS / cloning / separator / (LLM client)
+│   ├── runtime/            #   Scheduler + worker subprocess pool
+│   ├── video/              #   Video translation orchestrator + ffmpeg glue
+│   ├── db/                 #   SQLModel + Alembic
+│   └── llm/                #   OpenAI-compatible LLM client
+├── web/                    # Frontend (React + Semi Design + Vite)
+├── migrations/             # Alembic revisions
+├── scripts/                # Model downloaders, housekeeping
+└── tests/                  # unit / integration / e2e
 ```
+
+## Architecture & Decisions
+
+Design documents and Architecture Decision Records live in `docs/superpowers/`:
+
+- Entry point: [docs/superpowers/specs/voxcraft/README.md](docs/superpowers/specs/voxcraft/README.md)
+- ADR index: [docs/superpowers/specs/voxcraft/decisions/](docs/superpowers/specs/voxcraft/decisions/)
+
+> `docs/` is intentionally git-ignored in the upstream repository (internal design corpus). The published code is self-explanatory via source comments; the ADRs are reference-only for maintainers.
+
+## Roadmap
+
+Current release: **v0.4.0** — video translation orchestration ([CHANGELOG](CHANGELOG.md)).
+
+Upcoming (see roadmap):
+
+- **v0.5**: observability polish (Prometheus, structured job audit)
+- **v1.0**: stabilization — full test coverage, running-job cancellation propagation
+
+## Contributing
+
+This is a small, opinionated project. Issues and PRs are welcome if they align with the design principles in [01-positioning.md](docs/superpowers/specs/voxcraft/01-positioning.md). Significant architecture changes require a new ADR.
 
 ## License
 
-- 代码：MIT
-- 集成的第三方模型权重各有独立条款（如 IndexTTS 为非商业许可）；仅限自托管 / 非商业场景使用
-- 设计文档（docs/）仅作本地沉淀
+- Source code: [MIT](LICENSE)
+- Integrated third-party model weights carry their own terms (notably IndexTTS is non-commercial). Redistribution and commercial use require reviewing the license of each model you ship
+- Design documentation under `docs/` is retained locally and not published with the repository
