@@ -74,6 +74,59 @@ def test_download_url_streams_to_file(tmp_path):
     assert target.read_bytes() == b"RIFFmodelbytes"
 
 
+def test_download_url_fetches_piper_sidecar(tmp_path):
+    """.onnx URL 应自动拉取同名 .onnx.json 配置（Piper 约定）。"""
+    import httpx
+
+    served: dict[str, bytes] = {
+        "https://example.com/piper.onnx": b"ONNX_WEIGHTS",
+        "https://example.com/piper.onnx.json": b'{"audio": {"sample_rate": 22050}}',
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url in served:
+            return httpx.Response(200, content=served[url])
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    target = tmp_path / "piper.onnx"
+
+    with patch.object(
+        downloader, "_build_httpx_client", lambda: httpx.Client(transport=transport)
+    ):
+        result = downloader.download_url("https://example.com/piper.onnx", target)
+
+    assert result == target
+    assert target.read_bytes() == b"ONNX_WEIGHTS"
+    sidecar = tmp_path / "piper.onnx.json"
+    assert sidecar.exists()
+    assert b"sample_rate" in sidecar.read_bytes()
+
+
+def test_download_url_tolerates_missing_sidecar(tmp_path):
+    """sidecar 下载失败（如非 Piper 的 URL）不应拉起主调用。"""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith(".json"):
+            return httpx.Response(404)  # sidecar 不存在
+        return httpx.Response(200, content=b"MAIN")
+
+    transport = httpx.MockTransport(handler)
+    target = tmp_path / "x.onnx"
+
+    with patch.object(
+        downloader, "_build_httpx_client", lambda: httpx.Client(transport=transport)
+    ):
+        result = downloader.download_url("https://example.com/x.onnx", target)
+
+    assert result == target
+    assert target.read_bytes() == b"MAIN"
+    assert not (tmp_path / "x.onnx.json").exists()
+
+
 def test_download_url_wraps_http_error(tmp_path):
     import httpx
 

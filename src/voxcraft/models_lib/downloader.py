@@ -81,8 +81,31 @@ def download_ms(
 
 
 def download_url(url: str, local_path: Path) -> Path:
+    """下载单个 URL 到 local_path。
+
+    Piper 约定：`.onnx` 模型必须配对同目录同名的 `.onnx.json` 配置才能 load。
+    catalog 只挂了主 URL 时，本函数会自动下 sidecar JSON（URL + `.json`），
+    sidecar 失败不致命（已日志，不抛错），但 Provider 加载时仍会报错——这是
+    正确的失败点，因为主模型文件没有配置时本就不可用。
+    """
     local_path = Path(local_path)
     local_path.parent.mkdir(parents=True, exist_ok=True)
+    _download_single(url, local_path)
+    if url.endswith(".onnx"):
+        sidecar_url = url + ".json"
+        sidecar_path = local_path.parent / (local_path.name + ".json")
+        try:
+            _download_single(sidecar_url, sidecar_path)
+        except DownloadError:
+            # 记一下，不拉起失败；Provider 载入时若真缺 sidecar 会给出准确错误
+            import logging
+            logging.getLogger(__name__).warning(
+                "piper sidecar not found: %s (provider load will fail)", sidecar_url,
+            )
+    return local_path
+
+
+def _download_single(url: str, local_path: Path) -> None:
     try:
         client = _build_httpx_client()
         try:
@@ -103,7 +126,6 @@ def download_url(url: str, local_path: Path) -> Path:
             f"URL download failed: {e}",
             details={"url": url, "source": "url"},
         ) from e
-    return local_path
 
 
 def download_torch_hub(model_name: str, local_dir: Path) -> Path:
