@@ -28,10 +28,12 @@ export default defineConfig({
       "/asr": apiOrSpa,
       "/tts": apiOrSpa,
       "/separate": apiOrSpa,
+      "/video-translate": apiOrSpa,
       "/jobs": BACKEND,
       "/admin": BACKEND,
       "/health": BACKEND,
       "/models": BACKEND,
+      "/v1": BACKEND,
     },
   },
   build: {
