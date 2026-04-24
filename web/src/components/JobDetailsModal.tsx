@@ -2,6 +2,7 @@ import { Button, Descriptions, Modal, Space, Tag, Toast, Typography } from "@dou
 
 import { StatusTag } from "./StatusTag";
 import { JsonViewer } from "./JsonViewer";
+import { VideoTranslateDetails } from "./VideoTranslateDetails";
 import { retryJob } from "@/api/jobs";
 import type { Job } from "@/types/api";
 
@@ -111,16 +112,22 @@ export function JobDetailsModal({ job, onClose, onRetried }: Props) {
             </Button>
           )}
 
-          <div style={{ width: "100%" }}>
-            <Text strong>请求参数</Text>
-            <JsonViewer data={job.request ?? {}} />
-          </div>
+          {job.kind === "video_translate" ? (
+            <VideoTranslateDetails job={job} />
+          ) : (
+            <>
+              <div style={{ width: "100%" }}>
+                <Text strong>请求参数</Text>
+                <JsonViewer data={job.request ?? {}} />
+              </div>
 
-          {job.result && (
-            <div style={{ width: "100%" }}>
-              <Text strong>结果</Text>
-              <JsonViewer data={job.result} />
-            </div>
+              {job.result && (
+                <div style={{ width: "100%" }}>
+                  <Text strong>结果</Text>
+                  <JsonViewer data={job.result} />
+                </div>
+              )}
+            </>
           )}
         </Space>
       )}

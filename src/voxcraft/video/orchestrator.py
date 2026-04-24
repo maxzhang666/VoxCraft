@@ -240,13 +240,31 @@ def run_video_translate(
         # 主产物：视频输入 → video；音频输入 → audio
         output_path = str(video_out_path) if video_out_path else str(audio_out_path)
 
+        # 每段对照详情：给前端详情页渲染原文/译文/对齐表用
+        segments_detail = [
+            {
+                "index": a.index,
+                "orig_start": round(segments_raw[i].start, 3),
+                "orig_end": round(segments_raw[i].end, 3),
+                "final_start": round(a.final_start, 3),
+                "final_end": round(a.final_end, 3),
+                "speed": round(a.speed, 3),
+                "drift": round(a.drift, 3),
+                "source_text": segments_raw[i].text,
+                "translated_text": a.text,
+                "untranslated": a.text.startswith("[untranslated] "),
+            }
+            for i, a in enumerate(aligned)
+        ]
+
         return JobResult(
             ok=True,
             result={
                 "language": asr_result.language,
-                "duration": asr_result.duration,
+                "duration": round(asr_result.duration, 3),
                 "segment_count": len(segments_raw),
                 "warnings": warnings,
+                "segments": segments_detail,
             },
             output_path=output_path,
             output_extras=output_extras,

@@ -192,6 +192,35 @@ class _FakeLlm:
 
 # ---------- 正常路径 ----------
 
+def test_result_contains_segments_detail(tiny_audio_input: Path, tmp_path: Path):
+    """result.segments 每段带对照信息，供前端详情页渲染。"""
+    req = _make_req(tiny_audio_input, tmp_path)
+    llm = _FakeLlm(responses=["你好世界", "再见朋友"])
+    result = run_video_translate(req, _LruOne(), emit=None, llm_chat_fn=llm)
+
+    assert result.ok
+    segs = result.result["segments"]
+    assert len(segs) == 2
+    keys = {"index", "orig_start", "orig_end", "final_start", "final_end",
+            "speed", "drift", "source_text", "translated_text", "untranslated"}
+    assert set(segs[0].keys()) == keys
+    assert segs[0]["source_text"] == "hello world"
+    assert segs[0]["translated_text"] == "你好世界"
+    assert segs[0]["untranslated"] is False
+
+
+def test_result_segments_mark_untranslated(tiny_audio_input: Path, tmp_path: Path):
+    """空 LLM 输出触发回退，segment.untranslated=True 前端能标红。"""
+    req = _make_req(tiny_audio_input, tmp_path)
+    llm = _FakeLlm(responses=["", "正常译文"])
+    result = run_video_translate(req, _LruOne(), emit=None, llm_chat_fn=llm)
+
+    segs = result.result["segments"]
+    assert segs[0]["untranslated"] is True
+    assert segs[0]["translated_text"].startswith("[untranslated]")
+    assert segs[1]["untranslated"] is False
+
+
 def test_audio_input_produces_subtitle_and_audio(
     tiny_audio_input: Path, tmp_path: Path,
 ):
