@@ -333,6 +333,38 @@ def test_llm_extreme_inflation_fallback(tiny_audio_input: Path, tmp_path: Path):
     assert any("inflation" in w for w in result.result["warnings"])
 
 
+def test_llm_normal_inflation_accepted_under_default_ratio(
+    tiny_audio_input: Path, tmp_path: Path,
+):
+    """2-3x 的常规翻译膨胀（'OK' → '好的，我明白了'）不该触发降级。"""
+    req = _make_req(
+        tiny_audio_input, tmp_path,
+        asr_segments=[(0.0, 1.0, "OK"), (1.0, 2.0, "yes")],
+    )
+    llm = _FakeLlm(responses=["好的，我明白了。", "是的，没问题。"])
+    result = run_video_translate(req, _LruOne(), emit=None, llm_chat_fn=llm)
+
+    segs = result.result["segments"]
+    assert all(not s["untranslated"] for s in segs)
+
+
+def test_llm_inflation_disabled_via_zero_ratio(
+    tiny_audio_input: Path, tmp_path: Path,
+):
+    """translate_max_inflation=0 完全关闭膨胀检查，超长输出也被采纳。"""
+    req = _make_req(tiny_audio_input, tmp_path)
+    # dataclass frozen=True，用 object.__setattr__ 或重建 request_meta
+    new_meta = {**req.request_meta, "translate_max_inflation": 0.0}
+    from dataclasses import replace
+    req2 = replace(req, request_meta=new_meta)
+    llm = _FakeLlm(responses=["x" * 500, "ok"])
+    result = run_video_translate(req2, _LruOne(), emit=None, llm_chat_fn=llm)
+
+    assert result.ok
+    # 膨胀检查关闭 → 原本会被判"inflation"的段现在被采纳
+    assert result.result["segments"][0]["untranslated"] is False
+
+
 def test_llm_metadata_leak_fallback(tiny_audio_input: Path, tmp_path: Path):
     req = _make_req(tiny_audio_input, tmp_path)
     llm = _FakeLlm(responses=["<thinking>translating</thinking>", "ok"])

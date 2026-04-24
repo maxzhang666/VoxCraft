@@ -77,6 +77,7 @@ export interface VideoTranslateSubmitParams {
   tts_provider_id?: number;
   llm_provider_id?: number;
   system_prompt?: string;
+  translate_max_inflation?: number;
 }
 
 export interface JobSubmitResponse {

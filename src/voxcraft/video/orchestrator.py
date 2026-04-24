@@ -153,6 +153,7 @@ def run_video_translate(
             llm_chat_fn=chat_fn,
             warnings=warnings,
             llm_config=meta.get("llm", {}),
+            max_inflation_ratio=float(meta.get("translate_max_inflation", 5.0)),
         )
         progress.stage_done("translate")
 
@@ -321,6 +322,7 @@ def _translate_segments(
     llm_chat_fn: LlmChatFn,
     warnings: list[str],
     llm_config: dict,
+    max_inflation_ratio: float = 5.0,
 ) -> list[_TranslateOutcome]:
     head = system_prompt.strip() if system_prompt else (
         _DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(
@@ -352,7 +354,7 @@ def _translate_segments(
         raw = translated or ""
         cleaned = raw.strip()
 
-        degraded = _degrade_or_none(cleaned, src_text)
+        degraded = _degrade_or_none(cleaned, src_text, max_inflation_ratio)
         if degraded is not None:
             warnings.append(f"segment {i}: {degraded} — fell back to source text")
             out.append(_TranslateOutcome(
@@ -369,13 +371,19 @@ def _translate_segments(
     return out
 
 
-def _degrade_or_none(translated: str, source: str) -> str | None:
-    """返回降级原因字符串；None = 合格。"""
+def _degrade_or_none(
+    translated: str, source: str, max_inflation_ratio: float = 5.0,
+) -> str | None:
+    """返回降级原因字符串；None = 合格。
+
+    `max_inflation_ratio`：LLM 输出允许的最大膨胀倍数（len(out) > len(src) * ratio + 50）。
+    默认 5.0 容纳常规语义膨胀；设 `0` 完全禁用此项规则（其他三条保留）。
+    """
     if not translated:
         return "empty output"
     if _MARKDOWN_RE.search(translated):
         return "markdown detected"
-    if len(translated) > len(source) * 3 + 20:
+    if max_inflation_ratio > 0 and len(translated) > len(source) * max_inflation_ratio + 50:
         return "extreme inflation"
     for pat in _LEAK_PATTERNS:
         if pat in translated:

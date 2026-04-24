@@ -66,6 +66,7 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
   const [ttsProviderId, setTtsProviderId] = useState<number | undefined>();
   const [llmProviderId, setLlmProviderId] = useState<number | undefined>();
   const [systemPrompt, setSystemPrompt] = useState<string>("");
+  const [maxInflation, setMaxInflation] = useState<number>(5);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [asrProviders, setAsrProviders] = useState<Provider[]>([]);
@@ -86,6 +87,7 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
     setTtsProviderId(undefined);
     setLlmProviderId(undefined);
     setSystemPrompt("");
+    setMaxInflation(5);
     setAdvancedOpen(false);
   };
 
@@ -155,6 +157,7 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
         tts_provider_id: ttsProviderId,
         llm_provider_id: llmProviderId,
         system_prompt: systemPrompt.trim() || undefined,
+        translate_max_inflation: maxInflation,
       });
       Toast.info("已加入队列");
       onSuccess();
@@ -341,6 +344,20 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
               rows={3}
               maxCount={2000}
             />
+          </Form.Slot>
+
+          <Form.Slot label="翻译膨胀上限（LLM 输出超原文多少倍判为降级）">
+            <InputNumber
+              value={maxInflation}
+              onChange={(v) => setMaxInflation(Number(v))}
+              min={0}
+              max={20}
+              step={0.5}
+              style={{ width: "100%" }}
+            />
+            <Text type="tertiary" size="small" style={{ marginTop: 4 }}>
+              默认 5.0 容纳常规语义膨胀；设 0 完全关闭此检查（仍保留空/markdown/元信息三项）
+            </Text>
           </Form.Slot>
         </Collapsible>
       </Form>

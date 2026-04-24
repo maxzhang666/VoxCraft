@@ -21,6 +21,8 @@ export async function submitVideoTranslate(
   if (params.llm_provider_id !== undefined)
     fd.append("llm_provider_id", String(params.llm_provider_id));
   if (params.system_prompt) fd.append("system_prompt", params.system_prompt);
+  if (params.translate_max_inflation !== undefined)
+    fd.append("translate_max_inflation", String(params.translate_max_inflation));
 
   const r = await api.post<JobSubmitResponse>("/video-translate", fd);
   return r.data;

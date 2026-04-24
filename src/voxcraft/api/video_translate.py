@@ -29,9 +29,12 @@ from voxcraft.api.business import (
 )
 from voxcraft.api.schemas.job import JobSubmitResponse
 from voxcraft.api.schemas.video_translate import (
+    DEFAULT_TRANSLATE_MAX_INFLATION,
     MAX_SPEEDUP,
     MAX_SYSTEM_PROMPT_LEN,
+    MAX_TRANSLATE_MAX_INFLATION,
     MIN_SPEEDUP,
+    MIN_TRANSLATE_MAX_INFLATION,
     SUPPORTED_EXTENSIONS,
     VIDEO_EXTENSIONS,
     AlignMode,
@@ -165,6 +168,10 @@ async def submit_video_translate(
     tts_provider_id: int | None = Form(None),
     llm_provider_id: int | None = Form(None),
     system_prompt: str | None = Form(None, max_length=MAX_SYSTEM_PROMPT_LEN),
+    translate_max_inflation: float = Form(
+        DEFAULT_TRANSLATE_MAX_INFLATION,
+        ge=MIN_TRANSLATE_MAX_INFLATION, le=MAX_TRANSLATE_MAX_INFLATION,
+    ),
     session: Session = Depends(get_session),
 ) -> JobSubmitResponse:
     settings = get_settings()
@@ -319,6 +326,7 @@ async def submit_video_translate(
         "tts_provider_id": tts_provider_id,
         "llm_provider_id": llm_provider_id,
         "system_prompt": sp,
+        "translate_max_inflation": translate_max_inflation,
         "asr_provider_name": asr_name,
         "tts_provider_name": tts_name,
     }
@@ -409,6 +417,7 @@ def build_video_translate_request(
         "align_mode": meta.get("align_mode", "elastic"),
         "align_max_speedup": float(meta.get("align_max_speedup", 1.3)),
         "system_prompt": meta.get("system_prompt"),
+        "translate_max_inflation": float(meta.get("translate_max_inflation", 5.0)),
     }
 
     return JobRequest(

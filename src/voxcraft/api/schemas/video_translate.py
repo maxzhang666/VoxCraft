@@ -45,3 +45,9 @@ MAX_SPEEDUP = 2.0
 
 # system_prompt 长度上限（ADR-014）
 MAX_SYSTEM_PROMPT_LEN = 2000
+
+# LLM 翻译膨胀阈值：len(output) > len(source) * ratio + bonus 判定为降级
+# 默认 5.0 容纳正常语义膨胀（"OK" → "好的，我明白了"）；设 0 完全关闭此检查
+DEFAULT_TRANSLATE_MAX_INFLATION = 5.0
+MIN_TRANSLATE_MAX_INFLATION = 0.0
+MAX_TRANSLATE_MAX_INFLATION = 20.0
