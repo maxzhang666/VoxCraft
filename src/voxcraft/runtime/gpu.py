@@ -36,6 +36,18 @@ def _nvml():
         return None
 
 
+def resolve_device(spec: str | None) -> str:
+    """Provider config 的 device 字段（auto/cpu/cuda）→ 实际生效设备字符串。
+
+    auto + GPU 可用 → cuda；auto 但无 GPU → cpu；显式值原样返回。worker 层在 Job
+    入口调一次，把结果写到日志和 Job.result，便于追溯任务到底跑在哪。
+    """
+    s = (spec or "auto").strip().lower()
+    if s == "auto":
+        return "cuda" if is_cuda_available() else "cpu"
+    return s
+
+
 def is_cuda_available() -> bool:
     if _torch_cuda() is not None:
         return True

@@ -26,6 +26,15 @@ export function JobBadges({ job }: Props) {
   const elapsedText = elapsedMs !== null ? formatElapsed(elapsedMs) : null;
 
   const badges = buildBadges(job, elapsedText);
+  // device 标签所有 kind 共享：从 result.device 取（worker 在 run() 入口注入）
+  const res = (job.result ?? {}) as Record<string, unknown>;
+  const device = typeof res.device === "string" ? res.device : null;
+  if (device) {
+    badges.push({
+      text: device === "cuda" ? "💻 GPU" : "💻 CPU",
+      color: device === "cuda" ? "violet" : "grey",
+    });
+  }
   if (badges.length === 0) return null;
 
   return (

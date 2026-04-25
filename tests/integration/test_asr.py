@@ -72,6 +72,19 @@ def test_asr_explicit_provider_name(client, mock_asr_registered):
     assert final["provider_name"] == "mock-asr"
 
 
+def test_asr_result_includes_device(client, mock_asr_registered):
+    """worker 把实际生效设备注入 Job.result.device，供前端展示与日志诊断。"""
+    _create_mock_asr(client)
+    r = client.post(
+        "/api/asr",
+        files={"audio": ("a.wav", b"RIFF", "audio/wav")},
+    )
+    final = wait_for_job(client, r.json()["job_id"])
+    assert final["status"] == "succeeded"
+    # mac 测试环境无 CUDA → 应该是 cpu；resolve_device("auto") = cpu
+    assert final["result"]["device"] in {"cpu", "cuda"}
+
+
 def test_asr_emits_job_progress_events(client, mock_asr_registered):
     """Mock ASR 内置 progress_cb(0.5) + (1.0) 调用；事件应到 EventBus → SSE 订阅方。"""
     _create_mock_asr(client)
