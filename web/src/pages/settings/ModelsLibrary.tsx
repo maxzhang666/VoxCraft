@@ -1,4 +1,4 @@
-import { Button, Empty, Select, Space, Toast, Typography } from "@douyinfe/semi-ui";
+import { Button, Col, Empty, Row, Select, Space, Toast, Typography } from "@douyinfe/semi-ui";
 import { IconPlus, IconRefresh } from "@douyinfe/semi-icons";
 import { useCallback, useEffect, useState } from "react";
 
@@ -130,15 +130,19 @@ export function ModelsLibrary() {
           style={{ padding: "40px 0" }}
         />
       ) : (
-        filtered.map((e) => (
-          <ModelCatalogCard
-            key={e.catalog_key}
-            entry={e}
-            onDownload={onDownload}
-            onCancel={onCancel}
-            onDelete={onDelete}
-          />
-        ))
+        // 宫格布局：>=lg 4 列 / md 3 列 / 默认 2 列；卡片等高
+        <Row gutter={[16, 16]}>
+          {filtered.map((e) => (
+            <Col key={e.catalog_key} xs={24} sm={12} md={8} lg={6}>
+              <ModelCatalogCard
+                entry={e}
+                onDownload={onDownload}
+                onCancel={onCancel}
+                onDelete={onDelete}
+              />
+            </Col>
+          ))}
+        </Row>
       )}
 
       <CustomModelDrawer
