@@ -52,8 +52,9 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
       Promise.all([listProviders("cloning"), listVoices()])
         .then(([ps, vs]) => {
           setProviders(ps.filter((p) => p.enabled));
-          // 只展示自管 cloned voice（vx_ 前缀），preset 不参与克隆复用
-          setVoices(vs.filter((v) => v.source === "cloned"));
+          // preset + cloned 都可选——UI 标签区分；preset 走 Piper 等单音色 Provider，
+          // cloned 走 voice_refs；后端 worker 会按 voice_id 反查 ref_path
+          setVoices(vs);
         })
         .catch(() => undefined);
     } else {
@@ -138,7 +139,7 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
             <Radio value="upload">上传新参考音频</Radio>
             <Radio value="existing" disabled={voices.length === 0}>
               使用已有音色
-              {voices.length === 0 ? "（暂无）" : ""}
+              {voices.length === 0 ? "（暂无；请先在「我的音色」抽取）" : ""}
             </Radio>
           </RadioGroup>
         </Form.Slot>
@@ -200,7 +201,10 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
               }}
               style={{ width: "100%" }}
               optionList={voices.map((v) => ({
-                label: `${v.id}（${v.provider_name}）`,
+                label:
+                  v.source === "cloned"
+                    ? `🎵 ${v.id}（克隆 · ${v.provider_name}）`
+                    : `🔈 ${v.id}（预设 · ${v.provider_name}）`,
                 value: v.id,
               }))}
               placeholder="选择音色"
