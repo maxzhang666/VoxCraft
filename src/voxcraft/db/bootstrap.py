@@ -12,7 +12,34 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from voxcraft.config import get_settings
-from voxcraft.db.models import Model
+from voxcraft.db.models import Job, Model
+
+
+def mark_stale_jobs_interrupted(engine: Engine) -> int:
+    """把上次进程残留的 running / pending Job 标记为 interrupted。
+
+    重启后 scheduler 实例是新的，老 Job 不会被自动捡起；DB 里的状态却还停留在
+    running，UI 表现为"队列卡住"。本函数在 lifespan 早期把它们标为 interrupted，
+    用户可在 UI 手动点"继续"走 retry 路径——**不自动重跑**，因为该任务可能正是
+    把上一次进程拖崩的元凶，自动重试会反复触发。
+
+    返回受影响行数。
+    """
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Job).where(Job.status.in_(["running", "pending"]))  # type: ignore[attr-defined]
+        ).all()
+        for j in rows:
+            j.status = "interrupted"
+            j.error_code = "INTERRUPTED"
+            j.error_message = (
+                "Process restarted while this job was active; click 「继续」 to resume."
+            )
+            # finished_at 留空：任务并未真正结束，retry 时会重置
+            session.add(j)
+        if rows:
+            session.commit()
+    return len(rows)
 
 
 def _dir_size_bytes(path: Path) -> int:

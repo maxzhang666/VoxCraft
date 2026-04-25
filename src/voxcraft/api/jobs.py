@@ -114,11 +114,15 @@ async def delete_job(
 async def retry_job(
     id: str, request: Request, session: Session = Depends(get_session)
 ) -> JobSubmitResponse:
-    """复用 job_id 重新入队。仅 failed/cancelled 可重试。"""
+    """复用 job_id 重新入队。failed / cancelled / interrupted 可重试。
+
+    interrupted: 进程崩溃 / 重启时残留的 running/pending Job（见 bootstrap），
+    不会自动重跑（任务可能就是把进程拖崩的元凶），由用户在 UI 手动确认。
+    """
     j = session.get(Job, id)
     if j is None:
         raise _not_found(id)
-    if j.status not in {"failed", "cancelled"}:
+    if j.status not in {"failed", "cancelled", "interrupted"}:
         raise ValidationError(
             f"Cannot retry job in status: {j.status}",
             details={"job_id": id, "status": j.status},

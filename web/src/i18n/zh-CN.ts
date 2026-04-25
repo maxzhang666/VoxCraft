@@ -47,5 +47,6 @@ export const t = {
     succeeded: "已完成",
     failed: "失败",
     cancelled: "已取消",
+    interrupted: "中断（待确认）",
   },
 };

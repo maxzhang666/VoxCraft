@@ -186,6 +186,16 @@ export function JobCard(props: Props) {
               重试
             </Button>
           )}
+          {job.status === "interrupted" && (
+            <Button
+              size="small"
+              theme="solid"
+              type="warning"
+              onClick={() => handleRetry(job.id)}
+            >
+              继续
+            </Button>
+          )}
           {onViewDetails && (
             <Button size="small" type="tertiary" onClick={() => onViewDetails(job)}>
               详情

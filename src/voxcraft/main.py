@@ -24,7 +24,7 @@ from voxcraft.api import (
 )
 from voxcraft.api.error_handlers import register_error_handlers
 from voxcraft.config import get_settings
-from voxcraft.db.bootstrap import scan_existing_models
+from voxcraft.db.bootstrap import mark_stale_jobs_interrupted, scan_existing_models
 from voxcraft.db.engine import get_engine
 from voxcraft.db.migrate import run_upgrade_head
 from voxcraft.events.bus import get_bus
@@ -48,6 +48,10 @@ async def lifespan(app: FastAPI):
     engine = get_engine()
     # 代理注入要早于任何后续可能触发模型下载/HTTP 请求的步骤
     proxy_active = reload_proxy_from_db(engine)
+    # 上一次进程崩溃 / 重启时残留的 running / pending Job 不会被任何调度器自动捡起；
+    # 标为 "interrupted" 让 UI 提示用户手动继续（不自动重跑——任务本身可能就是
+    # 把进程拖崩的元凶，自动重试会反复触发）。
+    interrupted = mark_stale_jobs_interrupted(engine)
     manual_scanned = scan_existing_models(engine)
     bus = get_bus()
     settings = get_settings()
@@ -79,6 +83,7 @@ async def lifespan(app: FastAPI):
         "voxcraft.startup",
         manual_models_scanned=manual_scanned,
         orphan_downloads_cleaned=orphans,
+        stale_jobs_interrupted=interrupted,
         scheduler_backend=settings.scheduler_backend,
         proxy_hf_endpoint=proxy_active.get("hf_endpoint") or None,
         proxy_https=bool(proxy_active.get("https_proxy")),
