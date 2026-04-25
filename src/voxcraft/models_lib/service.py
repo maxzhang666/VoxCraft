@@ -18,6 +18,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import os
+
+import structlog
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
@@ -31,6 +34,9 @@ from voxcraft.models_lib.downloader import (
     download_torch_hub,
     download_url,
 )
+
+
+log = structlog.get_logger()
 
 
 _SCAN_INTERVAL = 1.0  # 秒
@@ -161,13 +167,31 @@ class ModelDownloadService:
         # UI 改完代理未重启场景：每次下载前从 DB 重新加载并注入 env
         # 注入是 process 全局；同进程后续 huggingface_hub / httpx 调用立即生效
         from voxcraft.runtime.proxy import reload_proxy_from_db
-        reload_proxy_from_db(self._engine)
+        proxy = reload_proxy_from_db(self._engine)
 
         model = self._load_model(model_id)
         target = self._models_dir / model.catalog_key
         # 从 catalog 取预期总大小（用于进度估算）；custom 模型无 catalog 则 None
         entry = get_by_key(model.catalog_key)
         expected_bytes = entry.size_mb * 1024 * 1024 if entry else None
+
+        # dispatch 日志：让用户能确认代理配置真的注入到了下载链路
+        log.info(
+            "model_download.dispatch",
+            model_id=model_id,
+            catalog_key=model.catalog_key,
+            source=model.source,
+            repo_id=model.repo_id,
+            target=str(target),
+            expected_mb=entry.size_mb if entry else None,
+            hf_endpoint=proxy.get("hf_endpoint") or None,
+            https_proxy=proxy.get("https_proxy") or None,
+            http_proxy=proxy.get("http_proxy") or None,
+            no_proxy=proxy.get("no_proxy") or None,
+            # 兼容核对：env 是否真的被设置到了进程
+            env_HF_ENDPOINT=os.environ.get("HF_ENDPOINT"),
+            env_HTTPS_PROXY=os.environ.get("HTTPS_PROXY"),
+        )
 
         self._update_status(
             model_id,
@@ -207,6 +231,15 @@ class ModelDownloadService:
                 )
         except Exception as e:
             scan_task.cancel()
+            log.error(
+                "model_download.failed",
+                model_id=model_id,
+                catalog_key=model.catalog_key,
+                source=model.source,
+                error_type=type(e).__name__,
+                error_msg=str(e),
+                exc_info=True,
+            )
             self._record_failure(model_id, e, target)
             return
 
@@ -223,6 +256,13 @@ class ModelDownloadService:
             return
 
         size_bytes = _dir_size_bytes(target) if target.exists() else 0
+        log.info(
+            "model_download.success",
+            model_id=model_id,
+            catalog_key=model.catalog_key,
+            source=model.source,
+            size_mb=round(size_bytes / 1024 / 1024, 2),
+        )
         self._update_status(
             model_id,
             status="ready",
@@ -239,10 +279,16 @@ class ModelDownloadService:
     async def _watch_progress(
         self, model_id: int, target: Path, expected_bytes: int | None
     ) -> None:
-        """后台每秒扫描目录 → 更新 DB progress + publish SSE。"""
+        """后台每秒扫描目录 → 更新 DB progress + publish SSE。
+
+        modelscope 把临时下载文件写到 ``target/._____temp/``；huggingface_hub
+        默认在 ``target/`` 直接写。两者都会被 rglob 的递归扫描算入。
+        """
         try:
+            tick = 0
             while True:
                 await asyncio.sleep(_SCAN_INTERVAL)
+                tick += 1
                 if not target.exists():
                     continue
                 downloaded = _dir_size_bytes(target)
@@ -251,6 +297,19 @@ class ModelDownloadService:
                 else:
                     # custom 模型无预估总大小，保持最小可见进度
                     progress = 0.01
+                # 每 5 秒打一次 DEBUG，便于排查"进度卡住"问题
+                if tick % 5 == 0:
+                    log.debug(
+                        "model_download.progress_scan",
+                        model_id=model_id,
+                        downloaded_mb=round(downloaded / 1024 / 1024, 2),
+                        expected_mb=(
+                            round(expected_bytes / 1024 / 1024, 2)
+                            if expected_bytes
+                            else None
+                        ),
+                        progress=round(progress, 4),
+                    )
                 self._update_progress_only(model_id, downloaded, progress)
                 await self._publish(
                     "model_download_progress",

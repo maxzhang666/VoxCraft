@@ -11,12 +11,17 @@
 """
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import httpx
+import structlog
 from huggingface_hub import snapshot_download as hf_snapshot_download
 
 from voxcraft.errors import DownloadError
+
+log = structlog.get_logger()
 
 # 延迟 import 由各分支内做；顶层只保留 hf（faster-whisper 已带）
 try:
@@ -29,8 +34,8 @@ _CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 
 def _build_httpx_client() -> httpx.Client:
-    """工厂函数方便测试 mock。"""
-    return httpx.Client(follow_redirects=True, timeout=None)
+    """工厂函数方便测试 mock。trust_env=True 让 httpx 自动遵循 HTTPS_PROXY/HTTP_PROXY/NO_PROXY。"""
+    return httpx.Client(follow_redirects=True, timeout=None, trust_env=True)
 
 
 def download_hf(
@@ -40,17 +45,49 @@ def download_hf(
 ) -> Path:
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
+
+    # huggingface_hub 在 import 时把 HF_ENDPOINT 固化为模块常量；
+    # 运行时改 env 不会影响已 import 的引用。这里每次显式从 env 读出来传入，
+    # 让 UI 改完代理无需重启容器即可生效。
+    endpoint = (os.environ.get("HF_ENDPOINT") or "").strip() or None
+    https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
+    http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
+
+    log.info(
+        "download.hf.start",
+        repo_id=repo_id,
+        local_dir=str(local_dir),
+        endpoint=endpoint or "https://huggingface.co (default)",
+        https_proxy=https_proxy,
+        http_proxy=http_proxy,
+        max_workers=max_workers,
+    )
+    started = time.monotonic()
     try:
         hf_snapshot_download(
             repo_id=repo_id,
             local_dir=str(local_dir),
             max_workers=max_workers,
+            endpoint=endpoint,
         )
     except Exception as e:
+        log.error(
+            "download.hf.failed",
+            repo_id=repo_id,
+            endpoint=endpoint,
+            error_type=type(e).__name__,
+            error_msg=str(e),
+            exc_info=True,
+        )
         raise DownloadError(
             f"HuggingFace download failed: {e}",
-            details={"repo_id": repo_id, "source": "hf"},
+            details={"repo_id": repo_id, "source": "hf", "endpoint": endpoint},
         ) from e
+    log.info(
+        "download.hf.done",
+        repo_id=repo_id,
+        elapsed_s=round(time.monotonic() - started, 2),
+    )
     return local_dir
 
 
@@ -66,6 +103,14 @@ def download_ms(
         )
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
+
+    log.info(
+        "download.ms.start",
+        repo_id=repo_id,
+        local_dir=str(local_dir),
+        max_workers=max_workers,
+    )
+    started = time.monotonic()
     try:
         ms_snapshot_download(
             model_id=repo_id,
@@ -73,10 +118,22 @@ def download_ms(
             max_workers=max_workers,
         )
     except Exception as e:
+        log.error(
+            "download.ms.failed",
+            repo_id=repo_id,
+            error_type=type(e).__name__,
+            error_msg=str(e),
+            exc_info=True,
+        )
         raise DownloadError(
             f"ModelScope download failed: {e}",
             details={"repo_id": repo_id, "source": "ms"},
         ) from e
+    log.info(
+        "download.ms.done",
+        repo_id=repo_id,
+        elapsed_s=round(time.monotonic() - started, 2),
+    )
     return local_dir
 
 
@@ -106,6 +163,14 @@ def download_url(url: str, local_path: Path) -> Path:
 
 
 def _download_single(url: str, local_path: Path) -> None:
+    https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
+    log.info(
+        "download.url.start",
+        url=url,
+        local_path=str(local_path),
+        https_proxy=https_proxy,
+    )
+    started = time.monotonic()
     try:
         client = _build_httpx_client()
         try:
@@ -117,15 +182,33 @@ def _download_single(url: str, local_path: Path) -> None:
         finally:
             client.close()
     except httpx.HTTPStatusError as e:
+        log.error(
+            "download.url.failed",
+            url=url,
+            status=e.response.status_code,
+            error_msg=str(e),
+        )
         raise DownloadError(
             f"URL download HTTP error: {e.response.status_code}",
             details={"url": url, "source": "url"},
         ) from e
     except Exception as e:
+        log.error(
+            "download.url.failed",
+            url=url,
+            error_type=type(e).__name__,
+            error_msg=str(e),
+            exc_info=True,
+        )
         raise DownloadError(
             f"URL download failed: {e}",
             details={"url": url, "source": "url"},
         ) from e
+    log.info(
+        "download.url.done",
+        url=url,
+        elapsed_s=round(time.monotonic() - started, 2),
+    )
 
 
 def download_torch_hub(model_name: str, local_dir: Path) -> Path:
@@ -151,12 +234,26 @@ def download_torch_hub(model_name: str, local_dir: Path) -> Path:
 
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
+    log.info("download.torch_hub.start", model=model_name, local_dir=str(local_dir))
+    started = time.monotonic()
     try:
         get_model(model_name)
     except Exception as e:
+        log.error(
+            "download.torch_hub.failed",
+            model=model_name,
+            error_type=type(e).__name__,
+            error_msg=str(e),
+            exc_info=True,
+        )
         raise DownloadError(
             f"torch.hub download failed: {e}",
             details={"model": model_name, "source": "torch_hub"},
         ) from e
     (local_dir / "torch_hub.marker").write_text(f"model={model_name}\n")
+    log.info(
+        "download.torch_hub.done",
+        model=model_name,
+        elapsed_s=round(time.monotonic() - started, 2),
+    )
     return local_dir
