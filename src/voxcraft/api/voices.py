@@ -9,7 +9,7 @@ reference WAV 即可，无需在创建阶段调用模型。
 """
 from __future__ import annotations
 
-import shutil
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -67,38 +67,37 @@ async def extract_voice(
 
     voice_id = "vx_" + uuid.uuid4().hex[:12]
 
-    # 1. 临时落地上传文件（uploads/）
+    # 1. 临时落地上传文件（uploads/）—— UploadFile.read() 是 async；
+    # 大文件 IO 也通过 to_thread 写盘，避免阻塞 event loop
     tmp_path = _uploads_dir() / f"{voice_id}{ext}"
-    tmp_path.write_bytes(reference.file.read())
+    upload_bytes = await reference.read()
+    await asyncio.to_thread(tmp_path.write_bytes, upload_bytes)
 
-    # 2. 视频 → ffmpeg 抽音轨；音频 → 直接复制为 .wav 占位（便于后续统一处理）
+    # 2. ffmpeg 抽音轨/标准化；音频统一转 16kHz mono WAV
+    # ffmpeg 是 subprocess.run 阻塞调用，必须 to_thread 否则 event loop 卡死，
+    # 期间 SSE / health / list 请求都会被串行化排队
     voices_dir = _outputs_dir() / "voices"
     voices_dir.mkdir(parents=True, exist_ok=True)
     ref_final = voices_dir / f"{voice_id}.wav"
     duration: float | None = None
     try:
-        if ext in _VIDEO_EXTS:
-            extract_audio(tmp_path, ref_final)
-        else:
-            # 已是音频：用 ffmpeg 标准化到 16kHz mono WAV，统一下游 Provider 期望
-            extract_audio(tmp_path, ref_final)
-        # 探测时长用作展示
+        await asyncio.to_thread(extract_audio, tmp_path, ref_final)
         try:
-            info = probe(ref_final)
+            info = await asyncio.to_thread(probe, ref_final)
             duration = info.duration
         except MediaDecodeError:
             duration = None
     except MediaDecodeError as e:
         # 抽音失败：清理半成品
-        ref_final.unlink(missing_ok=True)
-        tmp_path.unlink(missing_ok=True)
+        await asyncio.to_thread(lambda: ref_final.unlink(missing_ok=True))
+        await asyncio.to_thread(lambda: tmp_path.unlink(missing_ok=True))
         raise VoxCraftError(
             f"failed to extract audio: {e}",
             code="MEDIA_DECODE_ERROR",
             status_code=422,
         ) from e
     finally:
-        tmp_path.unlink(missing_ok=True)
+        await asyncio.to_thread(lambda: tmp_path.unlink(missing_ok=True))
 
     # 3. 写 voice_refs
     session.add(
