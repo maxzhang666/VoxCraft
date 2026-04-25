@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 import structlog
@@ -22,6 +23,33 @@ from huggingface_hub import snapshot_download as hf_snapshot_download
 from voxcraft.errors import DownloadError
 
 log = structlog.get_logger()
+
+
+def _rewrite_hf_url_for_mirror(url: str) -> str:
+    """若 URL 指向 huggingface.co 且配置了 HF_ENDPOINT 镜像，把 host 替换过去。
+
+    catalog 中 Piper 等单文件模型 URL 是硬编码的 https://huggingface.co/... 形式，
+    走 httpx 直连，不经过 huggingface_hub SDK；HF_ENDPOINT env 对它无效。
+    本函数把 host 重写到镜像（如 https://hf-mirror.com），保留 path/query/fragment。
+    主流 HF 镜像（hf-mirror.com 等）都按相同 path 结构对齐，所以重写安全。
+    """
+    endpoint = (os.environ.get("HF_ENDPOINT") or "").strip()
+    if not endpoint:
+        return url
+    src = urlparse(url)
+    if not src.netloc.endswith("huggingface.co"):
+        return url
+    mirror = urlparse(endpoint.rstrip("/"))
+    if not mirror.netloc:
+        return url
+    return urlunparse((
+        mirror.scheme or src.scheme,
+        mirror.netloc,
+        src.path,
+        src.params,
+        src.query,
+        src.fragment,
+    ))
 
 # 延迟 import 由各分支内做；顶层只保留 hf（faster-whisper 已带）
 try:
@@ -147,17 +175,25 @@ def download_url(url: str, local_path: Path) -> Path:
     """
     local_path = Path(local_path)
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    _download_single(url, local_path)
+    rewritten = _rewrite_hf_url_for_mirror(url)
+    if rewritten != url:
+        log.info(
+            "download.url.hf_mirror_rewrite",
+            original=url,
+            rewritten=rewritten,
+        )
+    _download_single(rewritten, local_path)
     if url.endswith(".onnx"):
-        sidecar_url = url + ".json"
+        # sidecar 也走重写后的镜像（如果原 URL 触发了重写）
+        sidecar_src = rewritten + ".json"
         sidecar_path = local_path.parent / (local_path.name + ".json")
         try:
-            _download_single(sidecar_url, sidecar_path)
+            _download_single(sidecar_src, sidecar_path)
         except DownloadError:
             # 记一下，不拉起失败；Provider 载入时若真缺 sidecar 会给出准确错误
             import logging
             logging.getLogger(__name__).warning(
-                "piper sidecar not found: %s (provider load will fail)", sidecar_url,
+                "piper sidecar not found: %s (provider load will fail)", sidecar_src,
             )
     return local_path
 

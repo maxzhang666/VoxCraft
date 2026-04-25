@@ -54,6 +54,66 @@ def test_download_ms_wraps_exception(tmp_path):
             downloader.download_ms("x/y", tmp_path / "m")
 
 
+# ---------- HF mirror rewrite ----------
+
+def test_rewrite_hf_url_no_endpoint_returns_original(monkeypatch):
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    url = "https://huggingface.co/org/repo/resolve/main/model.onnx"
+    assert downloader._rewrite_hf_url_for_mirror(url) == url
+
+
+def test_rewrite_hf_url_replaces_host_when_endpoint_set(monkeypatch):
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
+    url = "https://huggingface.co/org/repo/resolve/main/model.onnx"
+    out = downloader._rewrite_hf_url_for_mirror(url)
+    assert out == "https://hf-mirror.com/org/repo/resolve/main/model.onnx"
+
+
+def test_rewrite_hf_url_preserves_query_and_fragment(monkeypatch):
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
+    url = "https://huggingface.co/org/x/resolve/main/m.onnx?token=abc#frag"
+    out = downloader._rewrite_hf_url_for_mirror(url)
+    assert out == "https://hf-mirror.com/org/x/resolve/main/m.onnx?token=abc#frag"
+
+
+def test_rewrite_hf_url_skips_non_huggingface_host(monkeypatch):
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
+    url = "https://example.com/some/file.bin"
+    assert downloader._rewrite_hf_url_for_mirror(url) == url
+
+
+def test_rewrite_hf_url_skips_when_endpoint_invalid(monkeypatch):
+    monkeypatch.setenv("HF_ENDPOINT", "")
+    url = "https://huggingface.co/m.onnx"
+    assert downloader._rewrite_hf_url_for_mirror(url) == url
+
+
+def test_download_url_uses_hf_mirror(tmp_path, monkeypatch):
+    """Piper-style direct URL should go through the configured HF mirror."""
+    import httpx
+
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, content=b"RIFFok")
+
+    transport = httpx.MockTransport(handler)
+    target = tmp_path / "piper.onnx"
+    with patch.object(
+        downloader, "_build_httpx_client",
+        lambda: httpx.Client(transport=transport),
+    ):
+        downloader.download_url(
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh.onnx",
+            target,
+        )
+    # 主文件 URL 已重写
+    assert any(u.startswith("https://hf-mirror.com/") for u in seen_urls)
+    assert not any(u.startswith("https://huggingface.co/") for u in seen_urls)
+
+
 # ---------- download_url ----------
 
 def test_download_url_streams_to_file(tmp_path):
