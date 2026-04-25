@@ -56,10 +56,11 @@ export function ModelCatalogCard({ entry, onDownload, onCancel, onDelete }: Prop
         padding: "var(--vc-spacing-lg)",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 6,
         height: "100%",
+        overflow: "hidden",
       }}
-      style={{ height: "100%" }}
+      style={{ height: 240 }}
     >
       {/* 标题：长文本 ellipsis + tooltip */}
       <Text strong style={{ fontSize: 15 }} ellipsis={{ showTooltip: true }}>
