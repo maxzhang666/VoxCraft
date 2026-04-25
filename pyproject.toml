@@ -2,7 +2,9 @@
 name = "voxcraft"
 version = "0.1.0"
 description = "自托管多模态音频推理服务 (ASR / TTS / 克隆 / 人声分离)"
-requires-python = ">=3.13"
+# 3.12 是 IndexTTS 的实际兼容上限：IndexTTS pin numpy==1.26.2，PyPI 上 cp313 wheel
+# 从 numpy 1.26.4 才有，1.26.2 只有 sdist，3.13 下编译大概率失败。降到 3.12 走 wheel。
+requires-python = ">=3.12,<3.13"
 readme = "README.md"
 license = { text = "MIT" }
 
@@ -20,24 +22,35 @@ dependencies = [
     "python-dotenv>=1.0",
     "faster-whisper>=1.0",
     "piper-tts>=1.4.2",
-    "modelscope>=1.36.1",
+    # modelscope：项目仅用 snapshot_download(model_id, local_dir, max_workers)
+    # IndexTTS 钉死 modelscope==1.27.0；放宽兼容
+    "modelscope>=1.27,<2",
     "openai>=1.50",
     "ffmpeg-python>=0.2.0",
     "zhconv>=1.4.3",
     # GPU 支持：
     # - torch：VoxCPM / IndexTTS / Demucs 系 provider 需要；/health 探测优先用它
     # - nvidia-ml-py：torch 未加载场景（CPU 部署、mac 开发）下对 GPU 的轻量探测兜底
-    # torch 2.6 默认 PyPI wheel Linux 自带 CUDA 12.4 runtime（向下兼容驱动 ≥ 525）、
-    # mac arm64 自带 CPU/MPS wheel，无需自定义索引。仍支持 Pascal (sm_61)，2.7 才会砍。
-    "torch>=2.6,<2.7",
-    # torchaudio 必须跟 torch 同 minor 版本（PyTorch 团队同步发布；torchaudio 2.11
-    # 需要 torch 2.11，会动态链接 libcudart.so.13）。voxcpm 不限制 torchaudio 上限，
-    # uv 默认拉最新 → ABI mismatch。这里跟 torch 同步钉住 2.6.x。
-    "torchaudio>=2.6,<2.7",
+    # torch 2.8 默认 PyPI wheel Linux 自带 CUDA 12.x runtime；mac arm64 自带 CPU/MPS wheel。
+    # 升级到 2.8 是 IndexTTS-2 的硬约束（pin torch==2.8.*）；voxcpm>=2.0 / faster-whisper /
+    # piper-tts 三个均无 torch 上界，统一在 2.8 兼容。
+    "torch>=2.8,<2.9",
+    # torchaudio 必须跟 torch 同 minor 版本（PyTorch 团队同步发布；ABI 强绑定）。
+    "torchaudio>=2.8,<2.9",
     "nvidia-ml-py>=12",
-    # 声纹克隆 Provider：默认随项目装；用户在「模型库」下载 VoxCPM 模型后即可用
+    # 声纹克隆 Provider：默认随项目装；用户在「模型库」下载对应模型后即可用
+    # - voxcpm：Apache 2.0；CPU-first 加载，需要 ≥ 2× 模型字节的 RAM
+    # - indextts：B 站，无 PyPI 包，从 git tag 安装；含完整 build-system，uv 可解析为正常依赖
+    #   注：IndexTTS pin 了 numpy==1.26.2 / transformers==4.52.1 / accelerate==1.8.1 等，
+    #   uv lock 时会拉到这些精确版本——voxcpm 仅声明 transformers>=4.36 不冲突
     "voxcpm>=2.0",
+    "indextts",
 ]
+
+[tool.uv.sources]
+# IndexTTS 官方仅支持 git 安装（不发 PyPI）；v2 当前未打 release tag，
+# 钉 main HEAD commit hash 避免 main 漂移；后续官方打 tag 时切到 tag
+indextts = { git = "https://github.com/index-tts/index-tts.git", rev = "830f6f8f94a51fea23ab1d639027a86200075a4e" }
 
 [project.optional-dependencies]
 dev = [
