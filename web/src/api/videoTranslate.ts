@@ -23,6 +23,22 @@ export async function submitVideoTranslate(
   if (params.system_prompt) fd.append("system_prompt", params.system_prompt);
   if (params.translate_max_inflation !== undefined)
     fd.append("translate_max_inflation", String(params.translate_max_inflation));
+  // ASR 阶段调优透传（缺省走 Whisper Provider 默认）
+  if (params.asr_initial_prompt)
+    fd.append("asr_initial_prompt", params.asr_initial_prompt);
+  if (params.asr_temperature !== undefined)
+    fd.append("asr_temperature", String(params.asr_temperature));
+  if (params.asr_beam_size !== undefined)
+    fd.append("asr_beam_size", String(params.asr_beam_size));
+  if (params.asr_vad_filter !== undefined)
+    fd.append("asr_vad_filter", String(params.asr_vad_filter));
+  if (params.asr_condition_on_previous_text !== undefined)
+    fd.append(
+      "asr_condition_on_previous_text",
+      String(params.asr_condition_on_previous_text),
+    );
+  if (params.asr_word_timestamps !== undefined)
+    fd.append("asr_word_timestamps", String(params.asr_word_timestamps));
 
   const r = await api.post<JobSubmitResponse>("/video-translate", fd);
   return r.data;

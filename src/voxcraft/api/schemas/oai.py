@@ -14,6 +14,14 @@ from pydantic import BaseModel, Field
 TranscriptionFormat = Literal["json", "text", "srt", "verbose_json", "vtt"]
 
 
+class OaiTranscriptionWord(BaseModel):
+    """timestamp_granularities[]=word 时返回的词级时间戳。"""
+
+    word: str
+    start: float
+    end: float
+
+
 class OaiTranscriptionSegment(BaseModel):
     id: int
     start: float
@@ -35,6 +43,7 @@ class OaiTranscriptionVerbose(BaseModel):
     duration: float
     text: str
     segments: list[OaiTranscriptionSegment]
+    words: list[OaiTranscriptionWord] | None = None
 
 
 # ---------- /v1/audio/speech ----------

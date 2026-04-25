@@ -172,6 +172,13 @@ async def submit_video_translate(
         DEFAULT_TRANSLATE_MAX_INFLATION,
         ge=MIN_TRANSLATE_MAX_INFLATION, le=MAX_TRANSLATE_MAX_INFLATION,
     ),
+    # ---- ASR 调优透传（与 /api/asr 同语义，缺省走 Whisper Provider config）----
+    asr_initial_prompt: str | None = Form(None),
+    asr_temperature: float | None = Form(None),
+    asr_beam_size: int | None = Form(None),
+    asr_vad_filter: bool | None = Form(None),
+    asr_condition_on_previous_text: bool | None = Form(None),
+    asr_word_timestamps: bool | None = Form(None),
     session: Session = Depends(get_session),
 ) -> JobSubmitResponse:
     settings = get_settings()
@@ -312,6 +319,20 @@ async def submit_video_translate(
     if tts_provider_id is not None:
         tts_name = session.get(Provider, tts_provider_id).name  # type: ignore[union-attr]
 
+    # 收集非空 ASR 调优字段；空值走 Whisper Provider 默认值
+    asr_options: dict = {}
+    if asr_initial_prompt is not None:
+        asr_options["initial_prompt"] = asr_initial_prompt
+    for k, v in (
+        ("temperature", asr_temperature),
+        ("beam_size", asr_beam_size),
+        ("vad_filter", asr_vad_filter),
+        ("condition_on_previous_text", asr_condition_on_previous_text),
+        ("word_timestamps", asr_word_timestamps),
+    ):
+        if v is not None:
+            asr_options[k] = v
+
     request_meta: dict = {
         "source_filename": source_file.filename,
         "source_size_bytes": source_size,
@@ -329,6 +350,7 @@ async def submit_video_translate(
         "translate_max_inflation": translate_max_inflation,
         "asr_provider_name": asr_name,
         "tts_provider_name": tts_name,
+        "asr_options": asr_options,
     }
 
     now = datetime.now(UTC)
@@ -399,6 +421,7 @@ def build_video_translate_request(
             "class_name": asr_row.class_name,
             "name": asr_row.name,
             "config": dict(asr_row.config or {}),
+            "options": dict(meta.get("asr_options") or {}),
         },
         "tts": {
             "class_name": tts_row.class_name,

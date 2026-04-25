@@ -69,6 +69,14 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
   const [maxInflation, setMaxInflation] = useState<number>(5);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
+  // ASR 阶段调优（视频翻译流程内的 ASR 部分；空值走 Whisper Provider 默认）
+  const [asrPrompt, setAsrPrompt] = useState<string>("");
+  const [asrTemperature, setAsrTemperature] = useState<number | undefined>();
+  const [asrBeamSize, setAsrBeamSize] = useState<number | undefined>();
+  const [asrVadFilter, setAsrVadFilter] = useState<boolean | undefined>();
+  const [asrConditionPrev, setAsrConditionPrev] = useState<boolean | undefined>();
+  const [asrWordTimestamps, setAsrWordTimestamps] = useState<boolean | undefined>();
+
   const [asrProviders, setAsrProviders] = useState<Provider[]>([]);
   const [ttsProviders, setTtsProviders] = useState<Provider[]>([]);
   const [llmProviders, setLlmProviders] = useState<LlmProvider[]>([]);
@@ -89,6 +97,12 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
     setSystemPrompt("");
     setMaxInflation(5);
     setAdvancedOpen(false);
+    setAsrPrompt("");
+    setAsrTemperature(undefined);
+    setAsrBeamSize(undefined);
+    setAsrVadFilter(undefined);
+    setAsrConditionPrev(undefined);
+    setAsrWordTimestamps(undefined);
   };
 
   useEffect(() => {
@@ -158,6 +172,12 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
         llm_provider_id: llmProviderId,
         system_prompt: systemPrompt.trim() || undefined,
         translate_max_inflation: maxInflation,
+        asr_initial_prompt: asrPrompt.trim() || undefined,
+        asr_temperature: asrTemperature,
+        asr_beam_size: asrBeamSize,
+        asr_vad_filter: asrVadFilter,
+        asr_condition_on_previous_text: asrConditionPrev,
+        asr_word_timestamps: asrWordTimestamps,
       });
       Toast.info("已加入队列");
       onSuccess();
@@ -358,6 +378,89 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
             <Text type="tertiary" size="small" style={{ marginTop: 4 }}>
               默认 5.0 容纳常规语义膨胀；设 0 完全关闭此检查（仍保留空/markdown/元信息三项）
             </Text>
+          </Form.Slot>
+
+          {/* ---- ASR 阶段调优 ---- */}
+          <div
+            style={{
+              marginTop: "var(--vc-spacing-lg)",
+              paddingTop: "var(--vc-spacing-md)",
+              borderTop: "1px dashed var(--vc-color-border)",
+              color: "var(--vc-color-text-secondary)",
+              fontSize: 13,
+            }}
+          >
+            ASR 识别精度调优（仅当对识别结果不满意时调整；空值走 Whisper Provider 默认）
+          </div>
+
+          <Form.Slot label="ASR 初始 Prompt（领域词汇/风格提示）">
+            <TextArea
+              value={asrPrompt}
+              onChange={setAsrPrompt}
+              placeholder='如"以下是普通话演讲，包含术语：VoxCraft / FastAPI"'
+              rows={2}
+              maxCount={1000}
+            />
+          </Form.Slot>
+
+          <Form.Slot label="ASR 温度（0=贪婪可复现）">
+            <InputNumber
+              value={asrTemperature}
+              onChange={(v) => setAsrTemperature(v as number | undefined)}
+              min={0}
+              max={1}
+              step={0.1}
+              placeholder="留空走 Provider 默认（0.0）"
+              style={{ width: "100%" }}
+            />
+          </Form.Slot>
+
+          <Form.Slot label="ASR Beam 宽度">
+            <InputNumber
+              value={asrBeamSize}
+              onChange={(v) => setAsrBeamSize(v as number | undefined)}
+              min={1}
+              max={20}
+              step={1}
+              placeholder="留空走 Provider 默认（5）；增大→更准更慢"
+              style={{ width: "100%" }}
+            />
+          </Form.Slot>
+
+          <Form.Slot label="VAD 过滤静音">
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Switch
+                checked={asrVadFilter === true}
+                onChange={(v) => setAsrVadFilter(v ? true : undefined)}
+              />
+              <Text type="tertiary" size="small">
+                开启 Silero VAD 跳过静音段（对长音频/含背景音强烈推荐）
+              </Text>
+            </div>
+          </Form.Slot>
+
+          <Form.Slot label="禁用上下文延续">
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Switch
+                checked={asrConditionPrev === false}
+                onChange={(v) => setAsrConditionPrev(v ? false : undefined)}
+              />
+              <Text type="tertiary" size="small">
+                长音频出现重复幻觉时开启此开关（避免错误传播）
+              </Text>
+            </div>
+          </Form.Slot>
+
+          <Form.Slot label="输出词级时间戳">
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Switch
+                checked={asrWordTimestamps === true}
+                onChange={(v) => setAsrWordTimestamps(v ? true : undefined)}
+              />
+              <Text type="tertiary" size="small">
+                字幕对齐更精细，但识别慢约 30%
+              </Text>
+            </div>
           </Form.Slot>
         </Collapsible>
       </Form>

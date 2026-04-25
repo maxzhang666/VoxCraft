@@ -52,7 +52,7 @@ class _ProgrammableAsr(AsrProvider):
             loaded=self._loaded,
         )
 
-    def transcribe(self, audio_path, language=None, progress_cb=None):
+    def transcribe(self, audio_path, language=None, progress_cb=None, options=None):  # noqa: ARG002
         if progress_cb:
             progress_cb(0.5)
             progress_cb(1.0)

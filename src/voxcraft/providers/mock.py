@@ -41,6 +41,7 @@ class InMemoryMockAsrProvider(AsrProvider):
         audio_path: str,
         language: str | None = None,
         progress_cb=None,
+        options: dict | None = None,  # noqa: ARG002 — mock 忽略调优参数
     ) -> AsrResult:
         if progress_cb is not None:
             progress_cb(0.5)

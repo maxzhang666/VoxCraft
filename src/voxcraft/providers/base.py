@@ -108,8 +108,16 @@ class AsrProvider(Provider):
         audio_path: str,
         language: str | None = None,
         progress_cb: "Callable[[float], None] | None" = None,
+        options: dict | None = None,
     ) -> AsrResult:
-        """`progress_cb(p)` 接受 0.0~1.0 的浮点数；实现方自行决定汇报节奏。"""
+        """`progress_cb(p)` 接受 0.0~1.0 的浮点数；实现方自行决定汇报节奏。
+
+        ``options`` 是后端无关的调优参数键值对，由路由层从用户请求收集。
+        当前 Whisper 支持的 keys（faster-whisper 命名）：
+        beam_size / initial_prompt / temperature / condition_on_previous_text /
+        compression_ratio_threshold / log_prob_threshold / no_speech_threshold /
+        vad_filter / word_timestamps。Provider 缺省值 + 请求 override 由实现合并。
+        """
         ...
 
 

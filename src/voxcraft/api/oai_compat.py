@@ -25,6 +25,7 @@ from voxcraft.api.schemas.oai import (
     OaiSpeechRequest,
     OaiTranscriptionSegment,
     OaiTranscriptionVerbose,
+    OaiTranscriptionWord,
     SpeechFormat,
     TranscriptionFormat,
 )
@@ -154,26 +155,38 @@ async def transcriptions(
     model: str = Form("whisper-1"),
     language: str | None = Form(None),
     response_format: TranscriptionFormat = Form("json"),
-    temperature: float | None = Form(None),  # noqa: ARG001 — 当前忽略
-    prompt: str | None = Form(None),  # noqa: ARG001
+    temperature: float | None = Form(None),
+    prompt: str | None = Form(None),
+    # OpenAI 字段 timestamp_granularities[] —— FastAPI 处理重复 form 字段
+    timestamp_granularities: list[str] | None = Form(None, alias="timestamp_granularities[]"),
     session: Session = Depends(get_session),
 ):
     try:
         provider_name = _resolve_provider_name(model, kind="asr")
         p_row = business._select_provider(session, kind="asr", name=provider_name)
         job_id = str(uuid.uuid4())
-        source_path = business._save_upload(file, job_id, ".wav")
+        source_path, _source_size = business._save_upload(file, job_id, ".wav")
         now = datetime.now(UTC)
+
+        # OpenAI 字段映射到 VoxCraft Job.request：worker 端读取后透传给 Whisper
+        req_data: dict = {
+            "source_filename": file.filename,
+            "language": language,
+            "oai_model": model,
+        }
+        if prompt is not None:
+            req_data["initial_prompt"] = prompt
+        if temperature is not None:
+            req_data["temperature"] = temperature
+        # timestamp_granularities=["word"] → 触发 word_timestamps=True
+        if timestamp_granularities and "word" in timestamp_granularities:
+            req_data["word_timestamps"] = True
 
         session.add(
             Job(
                 id=job_id, kind="asr", status="pending",
                 provider_name=p_row.name,
-                request={
-                    "source_filename": file.filename,
-                    "language": language,
-                    "oai_model": model,
-                },
+                request=req_data,
                 source_path=str(source_path),
                 progress=0.0, created_at=now,
             )
@@ -221,6 +234,20 @@ async def transcriptions(
             media_type="text/vtt",
         )
     # verbose_json
+    # 收集词级时间戳：仅当用户要求 timestamp_granularities[]=word 才包含
+    flat_words: list[OaiTranscriptionWord] | None = None
+    if timestamp_granularities and "word" in timestamp_granularities:
+        flat_words = []
+        for s in segments:
+            for w in (s.get("words") or []):
+                flat_words.append(
+                    OaiTranscriptionWord(
+                        word=str(w.get("word", "")),
+                        start=float(w.get("start") or 0.0),
+                        end=float(w.get("end") or 0.0),
+                    )
+                )
+
     body = OaiTranscriptionVerbose(
         language=language_out,
         duration=duration,
@@ -234,8 +261,9 @@ async def transcriptions(
             )
             for i, s in enumerate(segments)
         ],
+        words=flat_words,
     )
-    return JSONResponse(content=body.model_dump(), headers=headers)
+    return JSONResponse(content=body.model_dump(exclude_none=True), headers=headers)
 
 
 # ---------- /v1/audio/speech ----------

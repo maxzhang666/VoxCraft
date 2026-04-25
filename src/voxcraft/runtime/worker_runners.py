@@ -126,13 +126,44 @@ def _make_progress_cb(
 
 # ---------- kind-specific runners ----------
 
+_ASR_OPTION_KEYS = (
+    "beam_size",
+    "initial_prompt",
+    "temperature",
+    "condition_on_previous_text",
+    "compression_ratio_threshold",
+    "log_prob_threshold",
+    "no_speech_threshold",
+    "vad_filter",
+    "word_timestamps",
+)
+
+
 def _run_asr(req: JobRequest, inst, emit: EmitFn | None) -> JobResult:
     assert isinstance(inst, AsrProvider)
     assert req.source_path, "ASR 必须有 source_path"
     language = req.request_meta.get("language")
+    # 用户请求级调优字段：缺失则 Provider 实现自行回退 config 默认
+    options = {
+        k: req.request_meta[k]
+        for k in _ASR_OPTION_KEYS
+        if req.request_meta.get(k) not in (None, "")
+    }
     progress_cb = _make_progress_cb(req, emit)
-    r = inst.transcribe(req.source_path, language=language, progress_cb=progress_cb)
-    segments = [{"start": s.start, "end": s.end, "text": s.text} for s in r.segments]
+    r = inst.transcribe(
+        req.source_path,
+        language=language,
+        progress_cb=progress_cb,
+        options=options or None,
+    )
+    segments = []
+    for s in r.segments:
+        item: dict = {"start": s.start, "end": s.end, "text": s.text}
+        # word_timestamps 开启时 WhisperProvider 会在 segment 上动态附加 .words
+        words = getattr(s, "words", None)
+        if words:
+            item["words"] = words
+        segments.append(item)
     return JobResult(
         ok=True,
         result={

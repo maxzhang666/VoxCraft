@@ -78,6 +78,13 @@ export interface VideoTranslateSubmitParams {
   llm_provider_id?: number;
   system_prompt?: string;
   translate_max_inflation?: number;
+  // ASR 阶段调优（与 /api/asr 同语义）
+  asr_initial_prompt?: string;
+  asr_temperature?: number;
+  asr_beam_size?: number;
+  asr_vad_filter?: boolean;
+  asr_condition_on_previous_text?: boolean;
+  asr_word_timestamps?: boolean;
 }
 
 export interface JobSubmitResponse {

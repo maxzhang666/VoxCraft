@@ -107,6 +107,17 @@ async def submit_asr(
     audio: UploadFile = File(...),
     language: str | None = Form(None),
     provider: str | None = Form(None),
+    # OpenAI 对齐字段（同名透传到 /v1/audio/transcriptions 也用这些）：
+    prompt: str | None = Form(None, description="OpenAI 字段 → 映射到 initial_prompt"),
+    temperature: float | None = Form(None),
+    # faster-whisper 调优扩展（OpenAI 不暴露，但精度调优常用）：
+    beam_size: int | None = Form(None),
+    condition_on_previous_text: bool | None = Form(None),
+    compression_ratio_threshold: float | None = Form(None),
+    log_prob_threshold: float | None = Form(None),
+    no_speech_threshold: float | None = Form(None),
+    vad_filter: bool | None = Form(None),
+    word_timestamps: bool | None = Form(None),
     session: Session = Depends(get_session),
 ) -> JobSubmitResponse:
     p_row = _select_provider(session, kind="asr", name=provider)
@@ -114,15 +125,32 @@ async def submit_asr(
     source_path, source_size = _save_upload(audio, job_id, ".wav")
     now = datetime.now(UTC)
 
+    # 收集所有非 None 调优字段写入 Job.request；worker 端只取非空
+    req_data: dict = {
+        "source_filename": audio.filename,
+        "source_size_bytes": source_size,
+        "language": language,
+    }
+    if prompt is not None:
+        req_data["initial_prompt"] = prompt  # OpenAI 命名 → faster-whisper 命名
+    for k, v in (
+        ("temperature", temperature),
+        ("beam_size", beam_size),
+        ("condition_on_previous_text", condition_on_previous_text),
+        ("compression_ratio_threshold", compression_ratio_threshold),
+        ("log_prob_threshold", log_prob_threshold),
+        ("no_speech_threshold", no_speech_threshold),
+        ("vad_filter", vad_filter),
+        ("word_timestamps", word_timestamps),
+    ):
+        if v is not None:
+            req_data[k] = v
+
     session.add(
         Job(
             id=job_id, kind="asr", status="pending",
             provider_name=p_row.name,
-            request={
-                "source_filename": audio.filename,
-                "source_size_bytes": source_size,
-                "language": language,
-            },
+            request=req_data,
             source_path=str(source_path),
             progress=0.0, created_at=now,
         )

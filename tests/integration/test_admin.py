@@ -129,7 +129,9 @@ def test_list_classes_returns_schema(client):
     assert whisper["kind"] == "asr"
     assert whisper["label"]
     field_keys = {f["key"] for f in whisper["fields"]}
-    assert {"model_path", "compute_type", "device", "simplify_chinese"} == field_keys
+    # 基础字段必须存在；新增的调优字段（beam_size/initial_prompt 等）不强约束完整集合
+    assert {"model_path", "compute_type", "device", "simplify_chinese"} <= field_keys
+    assert {"beam_size", "initial_prompt", "vad_filter", "word_timestamps"} <= field_keys
     compute_type = next(f for f in whisper["fields"] if f["key"] == "compute_type")
     assert compute_type["type"] == "enum"
     assert compute_type["options"] == ["int8", "fp16", "fp32"]

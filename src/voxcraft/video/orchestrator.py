@@ -137,6 +137,7 @@ def run_video_translate(
             str(audio_path),
             language=meta.get("source_lang"),
             progress_cb=progress.stage_sub_cb("asr"),
+            options=dict(meta["asr"].get("options") or {}) or None,
         )
         segments_raw = asr_result.segments
         if not segments_raw:

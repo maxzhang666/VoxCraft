@@ -76,7 +76,7 @@ def test_transcribe_applies_simplify_when_language_zh(monkeypatch):
     p = WhisperProvider(name="w", config={"model_path": "/x"})
 
     class _FakeModel:
-        def transcribe(self, audio_path, language=None):  # noqa: ARG002
+        def transcribe(self, audio_path, language=None, **kwargs):  # noqa: ARG002
             segs = [SimpleNamespace(start=0.0, end=1.0, text="當前識別結果")]
             info = SimpleNamespace(language="zh", duration=1.0)
             return iter(segs), info
@@ -97,7 +97,7 @@ def test_transcribe_skips_simplify_when_disabled(monkeypatch):
     )
 
     class _FakeModel:
-        def transcribe(self, audio_path, language=None):  # noqa: ARG002
+        def transcribe(self, audio_path, language=None, **kwargs):  # noqa: ARG002
             segs = [SimpleNamespace(start=0.0, end=1.0, text="當前")]
             info = SimpleNamespace(language="zh", duration=1.0)
             return iter(segs), info
@@ -116,7 +116,7 @@ def test_transcribe_skips_simplify_for_non_chinese(monkeypatch):
     p = WhisperProvider(name="w", config={"model_path": "/x"})
 
     class _FakeModel:
-        def transcribe(self, audio_path, language=None):  # noqa: ARG002
+        def transcribe(self, audio_path, language=None, **kwargs):  # noqa: ARG002
             segs = [SimpleNamespace(start=0.0, end=1.0, text="Hello")]
             info = SimpleNamespace(language="en", duration=1.0)
             return iter(segs), info
@@ -126,3 +126,64 @@ def test_transcribe_skips_simplify_for_non_chinese(monkeypatch):
 
     r = p.transcribe("any.wav", language="en")
     assert r.segments[0].text == "Hello"
+
+
+def test_transcribe_options_override_config_defaults():
+    """options 优先级高于 Provider config；缺失则回退 config；config 缺失再回退库默认。"""
+    from types import SimpleNamespace
+
+    captured: dict = {}
+
+    p = WhisperProvider(
+        name="w",
+        config={
+            "model_path": "/x",
+            "beam_size": 7,            # config 默认 7
+            "vad_filter": "true",       # config 开 VAD
+        },
+    )
+
+    class _FakeModel:
+        def transcribe(self, audio_path, language=None, **kwargs):  # noqa: ARG002
+            captured.update(kwargs)
+            info = SimpleNamespace(language="en", duration=1.0)
+            return iter([SimpleNamespace(start=0.0, end=1.0, text="x")]), info
+
+    p._model = _FakeModel()
+    p._loaded = True
+
+    # 请求级 options 覆盖 beam_size；vad_filter 不传 → 取 config 的 true；
+    # temperature 都没设 → 库默认 0.0
+    p.transcribe(
+        "any.wav",
+        options={"beam_size": 12, "initial_prompt": "code review"},
+    )
+
+    assert captured["beam_size"] == 12       # options override
+    assert captured["vad_filter"] is True     # config fallback
+    assert captured["temperature"] == 0.0     # library default
+    assert captured["initial_prompt"] == "code review"
+
+
+def test_transcribe_word_timestamps_attaches_words():
+    """word_timestamps=True 时，segment 上挂 .words 列表，runner 端能读到。"""
+    from types import SimpleNamespace
+
+    p = WhisperProvider(name="w", config={"model_path": "/x"})
+
+    fake_word = SimpleNamespace(start=0.0, end=0.5, word="hi", probability=0.9)
+
+    class _FakeModel:
+        def transcribe(self, audio_path, language=None, **kwargs):  # noqa: ARG002
+            seg = SimpleNamespace(start=0.0, end=1.0, text="hi", words=[fake_word])
+            return iter([seg]), SimpleNamespace(language="en", duration=1.0)
+
+    p._model = _FakeModel()
+    p._loaded = True
+
+    r = p.transcribe("any.wav", options={"word_timestamps": True})
+    seg = r.segments[0]
+    words = getattr(seg, "words", None)
+    assert words is not None
+    assert words[0]["word"] == "hi"
+    assert words[0]["start"] == 0.0
