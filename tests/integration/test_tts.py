@@ -53,21 +53,24 @@ def test_tts_voices_aggregates(client, mock_all_registered):
 
 def test_tts_voices_excludes_cloning_providers_as_preset(client, mock_all_registered):
     """克隆型 Provider（CAPABILITIES 含 clone）不应作为 preset voice 列出。"""
-    # seed 默认 voxcpm-clone（VoxCpmCloningProvider，CAPABILITIES={'clone'}）
+    # 自建一个克隆 Provider（用 mock 实现，CAPABILITIES={'clone'}），
+    # 验证不会被 /tts/voices 当 preset 罗列
+    cloning = client.post("/api/admin/providers", json={
+        "kind": "cloning",
+        "name": "test-cloning",
+        "class_name": "InMemoryMockCloningProvider",
+        "config": {},
+    }).json()
+
     r = client.get("/api/tts/voices")
     voices = r.json()["voices"]
-    # 没有 id 指向克隆 Provider 名的 preset
-    seeded_cloning = client.get(
-        "/api/admin/providers", params={"kind": "cloning"},
-    ).json()
-    for p in seeded_cloning:
-        matches = [
-            v for v in voices
-            if v["id"] == p["name"] and v["source"] == "preset"
-        ]
-        assert matches == [], (
-            f"cloning provider {p['name']} 不该出现 preset voice"
-        )
+    matches = [
+        v for v in voices
+        if v["id"] == cloning["name"] and v["source"] == "preset"
+    ]
+    assert matches == [], (
+        f"cloning provider {cloning['name']} 不该出现 preset voice"
+    )
 
 
 def test_tts_voices_includes_voice_refs_as_cloned(client, mock_all_registered):
@@ -93,10 +96,7 @@ def test_tts_voices_includes_voice_refs_as_cloned(client, mock_all_registered):
 
 
 def test_tts_no_provider_returns_400(client):
-    # 禁用种子 tts provider
-    seed = client.get("/api/admin/providers", params={"kind": "tts"}).json()[0]
-    client.patch(f"/api/admin/providers/{seed['id']}", json={"enabled": False})
-
+    # 系统启动后无 Provider；提交 TTS 应返回 VALIDATION_ERROR
     r = client.post("/api/tts", json={"text": "hi", "voice_id": "x"})
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"

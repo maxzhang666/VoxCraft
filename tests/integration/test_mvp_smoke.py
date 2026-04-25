@@ -29,11 +29,10 @@ def test_mvp_smoke_full_flow(client, mock_all_registered):
     # 1. 健康
     assert client.get("/api/health").status_code == 200
 
-    # 2. 初始种子 4 条
-    seed = client.get("/api/admin/providers").json()
-    assert len(seed) == 4
+    # 2. 初始 Provider 表为空（无 seed）
+    assert client.get("/api/admin/providers").json() == []
 
-    # 3. 注入 Mock + 设默认（覆盖种子）
+    # 3. 注入 4 个 Mock Provider 作为各 kind 的默认
     _create_mock_set(client)
 
     # 4. /asr（异步：202 + job_id，轮询至 succeeded）
@@ -135,10 +134,7 @@ def test_mvp_smoke_error_paths(client, mock_all_registered):
     assert r3.status_code == 404
     assert r3.json()["error"]["code"] == "JOB_NOT_FOUND"
 
-    # 4. /asr 无 Provider（种子全禁用）
-    for p in client.get("/api/admin/providers", params={"kind": "asr"}).json():
-        client.patch(f"/api/admin/providers/{p['id']}", json={"enabled": False})
-
+    # 4. /asr 无 Provider（启动后 Provider 表本就空）
     r4 = client.post("/api/asr", files={"audio": ("a.wav", b"RIFF", "audio/wav")})
     assert r4.status_code == 400
     assert r4.json()["error"]["code"] == "VALIDATION_ERROR"

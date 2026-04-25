@@ -23,7 +23,7 @@ from voxcraft.api import (
 )
 from voxcraft.api.error_handlers import register_error_handlers
 from voxcraft.config import get_settings
-from voxcraft.db.bootstrap import scan_existing_models, seed_default_providers
+from voxcraft.db.bootstrap import scan_existing_models
 from voxcraft.db.engine import get_engine
 from voxcraft.db.migrate import run_upgrade_head
 from voxcraft.events.bus import get_bus
@@ -47,7 +47,6 @@ async def lifespan(app: FastAPI):
     engine = get_engine()
     # 代理注入要早于任何后续可能触发模型下载/HTTP 请求的步骤
     proxy_active = reload_proxy_from_db(engine)
-    inserted = seed_default_providers(engine)
     manual_scanned = scan_existing_models(engine)
     bus = get_bus()
     settings = get_settings()
@@ -77,7 +76,6 @@ async def lifespan(app: FastAPI):
 
     log.info(
         "voxcraft.startup",
-        seeded_providers=inserted,
         manual_models_scanned=manual_scanned,
         orphan_downloads_cleaned=orphans,
         scheduler_backend=settings.scheduler_backend,

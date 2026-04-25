@@ -1,4 +1,9 @@
-"""启动时默认数据初始化 + 模型目录扫描。幂等。"""
+"""启动时模型目录扫描。幂等。
+
+历史上曾在此 seed 4 个默认 Provider，但 model_path 全是占位字符串（指向未下载的目录），
+首次启动后「模型管理」就出现一堆探活必败的幻觉行。改为完全空白启动：
+用户走「模型库下载 → 模型管理选已下载模型自动建 Provider」的闭环。
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,65 +12,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from voxcraft.config import get_settings
-from voxcraft.db.models import Model, Provider
-
-
-def _build_defaults() -> list[Provider]:
-    models_dir = str(get_settings().models_dir)
-    return [
-        Provider(
-            kind="asr",
-            name="whisper-medium-int8",
-            class_name="WhisperProvider",
-            config={
-                "model_path": f"{models_dir}/whisper-medium",
-                "compute_type": "int8",
-                "device": "auto",
-            },
-            is_default=True,
-        ),
-        Provider(
-            kind="tts",
-            name="piper-zh",
-            class_name="PiperProvider",
-            config={
-                "model": f"{models_dir}/piper/zh_CN-huayan-medium.onnx",
-            },
-            is_default=True,
-        ),
-        Provider(
-            kind="cloning",
-            name="voxcpm-clone",
-            class_name="VoxCpmCloningProvider",
-            config={
-                "model_dir": f"{models_dir}/voxcpm",
-                "device": "auto",
-            },
-            is_default=True,
-        ),
-        Provider(
-            kind="separator",
-            name="demucs-htdemucs",
-            class_name="DemucsProvider",
-            config={
-                "model_name": "htdemucs",
-                "device": "auto",
-            },
-            is_default=True,
-        ),
-    ]
-
-
-def seed_default_providers(engine: Engine) -> int:
-    """首次启动插入默认 Provider；若表非空直接返回 0。"""
-    with Session(engine) as session:
-        if session.exec(select(Provider)).first() is not None:
-            return 0
-        defaults = _build_defaults()
-        for p in defaults:
-            session.add(p)
-        session.commit()
-        return len(defaults)
+from voxcraft.db.models import Model
 
 
 def _dir_size_bytes(path: Path) -> int:

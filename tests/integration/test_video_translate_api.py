@@ -11,10 +11,34 @@ from __future__ import annotations
 
 import io
 
+import pytest
 from sqlmodel import Session
 
 from voxcraft.db.engine import get_engine
 from voxcraft.db.models import Job, LlmProvider, Provider
+
+
+# 路由内部要解析默认 ASR/TTS/cloning/separator Provider；本文件所有测试自动 seed
+# 4 个占位 Provider（model_path 指向不存在的路径，仅用于绕过 ID/kind/capability 校验）
+_LEGACY_DEFAULTS = [
+    ("asr", "whisper-medium-int8", "WhisperProvider",
+     {"model_path": "/x", "compute_type": "int8", "device": "auto"}),
+    ("tts", "piper-zh", "PiperProvider", {"model": "/x"}),
+    ("cloning", "voxcpm-clone", "VoxCpmCloningProvider",
+     {"model_dir": "/x", "device": "auto"}),
+    ("separator", "demucs-htdemucs", "DemucsProvider",
+     {"model_name": "htdemucs", "device": "auto"}),
+]
+
+
+@pytest.fixture(autouse=True)
+def _seed_default_providers(client):
+    for kind, name, cls, cfg in _LEGACY_DEFAULTS:
+        r = client.post("/api/admin/providers", json={
+            "kind": kind, "name": name, "class_name": cls, "config": cfg,
+        })
+        assert r.status_code == 201, r.text
+        client.post(f"/api/admin/providers/{r.json()['id']}/set-default")
 
 
 # ---------- helpers ----------

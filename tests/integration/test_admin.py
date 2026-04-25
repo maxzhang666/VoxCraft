@@ -2,15 +2,23 @@
 from __future__ import annotations
 
 
-def test_list_default_providers(client):
+def test_list_returns_empty_when_no_providers(client):
+    """初始无 Provider 时返回空列表（不再 seed 默认值）。"""
     r = client.get("/api/admin/providers")
     assert r.status_code == 200
-    data = r.json()
-    assert len(data) == 4
-    assert {p["kind"] for p in data} == {"asr", "tts", "cloning", "separator"}
+    assert r.json() == []
 
 
 def test_list_filter_by_kind(client):
+    """按 kind 过滤：建多个 kind 后只返回指定类型。"""
+    client.post("/api/admin/providers", json={
+        "kind": "asr", "name": "a-asr",
+        "class_name": "WhisperProvider", "config": {"model_path": "/x"},
+    })
+    client.post("/api/admin/providers", json={
+        "kind": "tts", "name": "a-tts",
+        "class_name": "PiperProvider", "config": {"model": "/x"},
+    })
     r = client.get("/api/admin/providers", params={"kind": "asr"})
     assert r.status_code == 200
     data = r.json()
@@ -54,8 +62,11 @@ def test_invalid_name_pattern_rejected(client):
 
 
 def test_update_provider(client):
-    pid = client.get("/api/admin/providers", params={"kind": "tts"}).json()[0]["id"]
-    r = client.patch(f"/api/admin/providers/{pid}", json={"enabled": False})
+    created = client.post("/api/admin/providers", json={
+        "kind": "tts", "name": "edit-target",
+        "class_name": "PiperProvider", "config": {"model": "/x"},
+    }).json()
+    r = client.patch(f"/api/admin/providers/{created['id']}", json={"enabled": False})
     assert r.status_code == 200
     assert r.json()["enabled"] is False
 
@@ -134,11 +145,15 @@ def test_list_classes_filter_by_kind(client):
 
 
 def test_test_endpoint_reports_failure_when_model_missing(client):
-    """种子 Whisper Provider 未下载模型：真实 load() 抛错 → ok=False + detail 透传。"""
-    pid = client.get("/api/admin/providers", params={"kind": "asr"}).json()[0]["id"]
-    r = client.post(f"/api/admin/providers/{pid}/test")
+    """指向不存在路径的 Whisper Provider 探活：真实 load() 抛错 → ok=False + detail 透传。"""
+    created = client.post("/api/admin/providers", json={
+        "kind": "asr", "name": "probe-missing",
+        "class_name": "WhisperProvider",
+        "config": {"model_path": "/nonexistent/whisper"},
+    }).json()
+    r = client.post(f"/api/admin/providers/{created['id']}/test")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is False
-    assert body["provider"] == "whisper-medium-int8"
+    assert body["provider"] == "probe-missing"
     assert body["detail"]  # 具体错误码/消息

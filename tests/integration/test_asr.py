@@ -49,10 +49,7 @@ def test_asr_uses_language_param(client, mock_asr_registered):
 
 
 def test_asr_no_provider_returns_validation_error(client, mock_asr_registered):
-    # 禁用种子 ASR Provider
-    seed = client.get("/api/admin/providers", params={"kind": "asr"}).json()[0]
-    client.patch(f"/api/admin/providers/{seed['id']}", json={"enabled": False})
-
+    # 系统启动后无任何 Provider；提交 ASR 应返回 VALIDATION_ERROR
     r = client.post(
         "/api/asr",
         files={"audio": ("a.wav", b"RIFF", "audio/wav")},

@@ -5,6 +5,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from voxcraft.providers import capabilities
 from voxcraft.providers.base import (
     AsrProvider,
     AsrResult,
@@ -97,6 +98,8 @@ class InMemoryMockSeparatorProvider(SeparatorProvider):
 
 
 class InMemoryMockCloningProvider(CloningProvider):
+    CAPABILITIES = frozenset({capabilities.CLONE})
+
     def __init__(self, name: str, config: dict) -> None:
         super().__init__(name, config)
         self._voices: dict[str, str] = {}  # voice_id → speaker_name
