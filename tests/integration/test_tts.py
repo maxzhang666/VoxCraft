@@ -100,3 +100,24 @@ def test_tts_no_provider_returns_400(client):
     r = client.post("/api/tts", json={"text": "hi", "voice_id": "x"})
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_tts_accepts_cloning_provider_by_name(client, mock_all_registered):
+    """/api/tts 显式指定 cloning kind 的 Provider 名时不应报"No tts provider"。
+
+    回归 #issue：TtsDrawer 把 tts + cloning 合并显示，用户选 voxcpm-2（cloning kind）
+    时路由曾硬限 kind=tts → "No tts provider available named voxcpm-2"。
+    """
+    p = client.post("/api/admin/providers", json={
+        "kind": "cloning",
+        "name": "mock-clone",
+        "class_name": "InMemoryMockCloningProvider",
+        "config": {},
+    }).json()
+
+    r = client.post(
+        "/api/tts",
+        json={"text": "hi", "voice_id": "anything", "provider": p["name"]},
+    )
+    # 路由放行（cloning Provider 也能合成）
+    assert r.status_code == 202, r.text

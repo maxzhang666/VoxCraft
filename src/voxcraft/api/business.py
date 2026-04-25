@@ -42,20 +42,41 @@ def get_session():
 
 # ---------- 辅助 ----------
 
-def _select_provider(session: Session, kind: str, name: str | None) -> Provider:
-    q = select(Provider).where(
-        Provider.kind == kind, Provider.enabled == True  # noqa: E712
-    )
+def _select_provider(
+    session: Session,
+    kind: str | tuple[str, ...],
+    name: str | None,
+) -> Provider:
+    """按 kind（单值或多值）+ name 查 enabled Provider。
+
+    多 kind 用于业务场景：TTS 路由需要 tts + cloning 共用——cloning 模型本身
+    能做合成（CloningProvider 是 TtsProvider 的子类），UI 把它们合并展示，
+    路由层也要兼容查询。
+
+    语义：
+    - name 显式给定：跨所有候选 kind 按 name 查（name 在 Provider 表唯一）
+    - name 缺省：只取**首选 kind**（kinds[0]）的 default，避免跨 kind 默认歧义
+    """
+    kinds: tuple[str, ...] = (kind,) if isinstance(kind, str) else kind
     if name:
-        q = q.where(Provider.name == name)
+        q = select(Provider).where(
+            Provider.kind.in_(kinds),  # type: ignore[attr-defined]
+            Provider.enabled == True,  # noqa: E712
+            Provider.name == name,
+        )
     else:
-        q = q.where(Provider.is_default == True)  # noqa: E712
+        q = select(Provider).where(
+            Provider.kind == kinds[0],
+            Provider.enabled == True,  # noqa: E712
+            Provider.is_default == True,  # noqa: E712
+        )
     row = session.exec(q).first()
     if row is None:
+        kind_label = kinds[0] if len(kinds) == 1 else "/".join(kinds)
         raise ValidationError(
-            f"No {kind} provider available"
+            f"No {kind_label} provider available"
             + (f" named {name}" if name else " (no default)"),
-            details={"kind": kind, "requested": name},
+            details={"kind": list(kinds), "requested": name},
         )
     return row
 
@@ -169,7 +190,8 @@ async def submit_tts(
     body: TtsRequest,
     session: Session = Depends(get_session),
 ) -> JobSubmitResponse:
-    p_row = _select_provider(session, kind="tts", name=body.provider)
+    # cloning Provider 也是 TtsProvider 子类，UI 合并展示；路由层同时接受两 kind
+    p_row = _select_provider(session, kind=("tts", "cloning"), name=body.provider)
     job_id = str(uuid.uuid4())
     now = datetime.now(UTC)
 
