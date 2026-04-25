@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import uuid
 import wave
+from pathlib import Path
 
 import structlog
 
@@ -28,6 +29,19 @@ from voxcraft.runtime.gpu import resolve_device, vram_usage_mb
 
 
 log = structlog.get_logger()
+
+
+def _dir_size_mb(path: str | None) -> int:
+    """模型目录总字节 / 1024² → MB；路径无效或为空返回 0。"""
+    if not path:
+        return 0
+    try:
+        total = sum(
+            f.stat().st_size for f in Path(path).rglob("*") if f.is_file()
+        )
+        return int(total // (1024 * 1024))
+    except OSError:
+        return 0
 
 
 def _f32_to_wav_bytes(audio, sample_rate: int) -> bytes:
@@ -106,15 +120,30 @@ class VoxCpmCloningProvider(CloningProvider):
         load_denoiser = str(self.config.get("load_denoiser", "false")).lower() == "true"
         target_device = resolve_device(self.config.get("device"))
         used_mb_before, total_mb = vram_usage_mb()
+        # voxcpm 库（VoxCPM2Model.from_local）的实际加载顺序：
+        #   1) torch.load(map_location="cpu") 先把权重读进 CPU
+        #   2) model 也在 CPU 构造
+        #   3) model.load_state_dict(state_dict)：state_dict + model 同时持有，峰值 ~ 2× 模型字节
+        #   4) 最后才 model.to(cuda)
+        # 8GB 容器加载 VoxCPM 2 (~4GB bfloat16) 会在第 3 步爆 OOM，被 SIGKILL；
+        # 用户看到的现象是 "GPU 空闲 + RAM 满载"——其实根本没机会传到 GPU。
+        model_size_mb = _dir_size_mb(self.config.get("model_dir"))
+        ram_peak_estimate_mb = model_size_mb * 2  # state_dict + model 共存
         log.info(
             "voxcpm.load.start",
             provider=self.name,
             model_dir=self.config.get("model_dir"),
             target_device=target_device,
             load_denoiser=load_denoiser,
+            model_size_mb=model_size_mb,
+            ram_peak_estimate_mb=ram_peak_estimate_mb,
             vram_used_mb_before=used_mb_before,
             vram_total_mb=total_mb,
             vram_free_mb=max(0, total_mb - used_mb_before),
+            note=(
+                "voxcpm loads to CPU first (state_dict + model coexist), "
+                "then transfers to target_device; container RAM must hold the peak"
+            ),
         )
         try:
             model_dir = self.config["model_dir"]
@@ -155,10 +184,19 @@ class VoxCpmCloningProvider(CloningProvider):
                 f"Missing config field: {e.args[0]}",
                 details={"provider": self.name},
             ) from e
+        except MemoryError as e:
+            raise ModelLoadError(
+                f"VoxCPM load OOM (CPU): {e}. "
+                f"模型 {model_size_mb}MB，加载峰值约 {ram_peak_estimate_mb}MB CPU RAM。"
+                "voxcpm 库设计先 CPU 全量加载再传 GPU，容器 RAM 不够即使 GPU 空闲也会被杀。"
+                "建议：① 容器 RAM 提升到 ≥ 估算峰值的 1.5 倍；② 换更小模型（voxcpm-0.5b）；"
+                "③ device=cpu 时 RAM 需求不变（仍有这一步），只是不再传 GPU。",
+                details={"provider": self.name, "model_size_mb": model_size_mb},
+            ) from e
         except Exception as e:
             raise ModelLoadError(
                 f"Failed to load VoxCPM: {e}",
-                details={"provider": self.name},
+                details={"provider": self.name, "model_size_mb": model_size_mb},
             ) from e
 
     def unload(self) -> None:
