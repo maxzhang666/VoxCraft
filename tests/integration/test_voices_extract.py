@@ -119,3 +119,41 @@ def test_delete_preset_voice_rejected(client):
     r = client.delete("/api/tts/voices/piper-zh")
     # preset id 不在 voice_refs 表 → 404 优先返回（实现细节）
     assert r.status_code == 404
+
+
+def test_voice_sample_streams_reference_audio(client):
+    """GET /api/tts/voices/{id}/sample 返回参考音频字节，供前端 <audio> 试听。"""
+    _create_cloning_provider(client)
+    create = client.post(
+        "/api/tts/voices/extract",
+        files={"reference": ("ref.wav", b"RIFFfake", "audio/wav")},
+    ).json()
+    voice_id = create["voice_id"]
+
+    r = client.get(f"/api/tts/voices/{voice_id}/sample")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("audio/")
+    assert len(r.content) > 0
+
+
+def test_voice_sample_404_for_unknown(client):
+    r = client.get("/api/tts/voices/vx_doesnotexist/sample")
+    assert r.status_code == 404
+
+
+def test_voice_sample_404_for_preset(client):
+    r = client.get("/api/tts/voices/piper-zh/sample")
+    assert r.status_code == 404
+
+
+def test_list_voices_exposes_sample_url(client):
+    _create_cloning_provider(client)
+    create = client.post(
+        "/api/tts/voices/extract",
+        files={"reference": ("ref.wav", b"RIFFfake", "audio/wav")},
+    ).json()
+    voice_id = create["voice_id"]
+
+    voices = client.get("/api/tts/voices").json()["voices"]
+    cloned = next(v for v in voices if v["id"] == voice_id)
+    assert cloned["sample_url"] == f"/api/tts/voices/{voice_id}/sample"

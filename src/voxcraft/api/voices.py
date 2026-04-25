@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from voxcraft.api.business import _outputs_dir, _select_provider, _uploads_dir
@@ -117,6 +118,47 @@ async def extract_voice(
         reference_audio_path=str(ref_final),
         duration_seconds=duration,
     )
+
+
+@router.get("/{voice_id}/sample")
+def get_voice_sample(
+    voice_id: str,
+    session: Session = Depends(get_session),
+):
+    """流式返回 cloned voice 的参考音频文件，供前端 <audio> 试听。
+
+    仅 vx_ 前缀的 cloned voice 有此能力；preset 音色（id=Provider 名）由 Provider
+    端自管样本，本端点对 preset 返回 404。
+    """
+    if not voice_id.startswith("vx_"):
+        raise VoxCraftError(
+            "preset voices have no sample bound to voice_refs",
+            code="VOICE_NOT_FOUND",
+            status_code=404,
+        )
+    row = session.get(VoiceRef, voice_id)
+    if row is None or not row.reference_audio_path:
+        raise VoxCraftError(
+            f"voice not found: {voice_id}",
+            code="VOICE_NOT_FOUND",
+            status_code=404,
+        )
+    p = Path(row.reference_audio_path)
+    if not p.is_file():
+        raise VoxCraftError(
+            f"reference audio missing on disk for {voice_id}",
+            code="VOICE_SAMPLE_MISSING",
+            status_code=410,
+        )
+    media_type = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".m4a": "audio/mp4",
+        ".flac": "audio/flac",
+        ".aac": "audio/aac",
+    }.get(p.suffix.lower(), "application/octet-stream")
+    return FileResponse(p, media_type=media_type, filename=p.name)
 
 
 @router.delete("/{voice_id}", status_code=204)

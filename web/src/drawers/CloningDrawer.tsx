@@ -1,11 +1,24 @@
-import { Form, Input, Select, TextArea, Toast, Upload } from "@douyinfe/semi-ui";
+import {
+  Form,
+  Input,
+  Radio,
+  RadioGroup,
+  Select,
+  TextArea,
+  Toast,
+  Typography,
+  Upload,
+} from "@douyinfe/semi-ui";
 import { IconUpload } from "@douyinfe/semi-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "@/api/client";
 import { listProviders } from "@/api/providers";
+import { listVoices } from "@/api/voices";
 import { TaskCreationDrawer } from "@/components/TaskCreationDrawer";
-import type { Provider } from "@/types/api";
+import type { Provider, Voice } from "@/types/api";
+
+const { Text } = Typography;
 
 interface Props {
   visible: boolean;
@@ -20,45 +33,84 @@ const ACCEPT_AUDIO =
   "audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/flac,audio/x-m4a,audio/aac," +
   ALLOWED_AUDIO_EXTS.map((e) => "." + e).join(",");
 
+type Mode = "upload" | "existing";
+
 export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
+  // mode：选择音色来源——upload=上传新参考音频走 /tts/clone；existing=用已有音色走 /tts
+  const [mode, setMode] = useState<Mode>("upload");
   const [refFile, setRefFile] = useState<File | null>(null);
   const [text, setText] = useState("");
   const [speakerName, setSpeakerName] = useState("");
   const [provider, setProvider] = useState("");
+  const [voiceId, setVoiceId] = useState("");
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [voices, setVoices] = useState<Voice[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (visible) {
-      listProviders("cloning").then((d) =>
-        setProviders(d.filter((p) => p.enabled))
-      );
+      Promise.all([listProviders("cloning"), listVoices()])
+        .then(([ps, vs]) => {
+          setProviders(ps.filter((p) => p.enabled));
+          // 只展示自管 cloned voice（vx_ 前缀），preset 不参与克隆复用
+          setVoices(vs.filter((v) => v.source === "cloned"));
+        })
+        .catch(() => undefined);
     } else {
+      setMode("upload");
       setRefFile(null);
       setText("");
       setSpeakerName("");
       setProvider("");
+      setVoiceId("");
     }
   }, [visible]);
 
-  const handleSubmit = async () => {
-    if (!refFile) {
-      Toast.warning("请上传参考音频");
-      return;
+  // 切换 existing 时若 voiceId 还未选，挑第一个并跟随其 provider_name
+  const selectedVoice = useMemo(
+    () => voices.find((v) => v.id === voiceId) ?? null,
+    [voices, voiceId],
+  );
+  useEffect(() => {
+    if (mode === "existing" && voices.length > 0 && !voiceId) {
+      const v = voices[0];
+      setVoiceId(v.id);
+      setProvider(v.provider_name);
     }
+  }, [mode, voices, voiceId]);
+
+  const handleSubmit = async () => {
     if (!text.trim()) {
       Toast.warning("请输入要合成的文本");
       return;
     }
     setSubmitting(true);
     try {
-      const fd = new FormData();
-      fd.append("reference_audio", refFile);
-      fd.append("text", text);
-      if (speakerName) fd.append("speaker_name", speakerName);
-      if (provider) fd.append("provider", provider);
-      await api.post("/tts/clone", fd);
-      Toast.info("已加入队列");
+      if (mode === "upload") {
+        if (!refFile) {
+          Toast.warning("请上传参考音频");
+          return;
+        }
+        const fd = new FormData();
+        fd.append("reference_audio", refFile);
+        fd.append("text", text);
+        if (speakerName) fd.append("speaker_name", speakerName);
+        if (provider) fd.append("provider", provider);
+        await api.post("/tts/clone", fd);
+        Toast.info("已加入克隆队列");
+      } else {
+        if (!voiceId) {
+          Toast.warning("请选择已有音色");
+          return;
+        }
+        // 走 /api/tts；声音色已存在则不需要再 clone，复用 voice_id 直接合成
+        await api.post("/tts", {
+          text,
+          voice_id: voiceId,
+          provider: provider || selectedVoice?.provider_name || undefined,
+        });
+        Toast.info("已加入合成队列（在 TTS 任务页查看）");
+      }
       onSuccess();
     } catch {
       // 拦截器已提示
@@ -72,45 +124,96 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
       visible={visible}
       title="新建克隆"
       submitting={submitting}
-      submitLabel="开始克隆"
+      submitLabel={mode === "upload" ? "开始克隆" : "开始合成"}
       onClose={onClose}
       onSubmit={handleSubmit}
     >
       <Form labelPosition="top">
-        <Form.Slot label="参考音频（3-30 秒）">
-          <Upload
-            accept={ACCEPT_AUDIO}
-            limit={1}
-            beforeUpload={({ file }) => {
-              const f = file.fileInstance as File;
-              const ext = (f.name.split(".").pop() || "").toLowerCase();
-              if (!ALLOWED_AUDIO_EXTS.includes(ext)) {
-                Toast.warning(
-                  `参考声纹仅支持 ${ALLOWED_AUDIO_EXTS.join(" / ")}；不接受视频或容器格式`,
-                );
-                return { fileInstance: f, status: "validateFail" };
-              }
-              setRefFile(f);
-              return false;
-            }}
-            onRemove={() => setRefFile(null)}
+        <Form.Slot label="音色来源">
+          <RadioGroup
+            value={mode}
+            onChange={(e) => setMode(e.target.value as Mode)}
+            type="button"
           >
-            <div
-              style={{
-                border: "2px dashed var(--vc-color-border)",
-                borderRadius: "var(--vc-radius-sm)",
-                padding: "var(--vc-spacing-lg)",
-                textAlign: "center",
-                color: "var(--vc-color-text-secondary)",
-              }}
-            >
-              <IconUpload /> 点击上传参考声纹
-              <div style={{ fontSize: 12, marginTop: 4 }}>
-                支持 {ALLOWED_AUDIO_EXTS.join(" / ")}；视频文件请先抽取音轨
-              </div>
-            </div>
-          </Upload>
+            <Radio value="upload">上传新参考音频</Radio>
+            <Radio value="existing" disabled={voices.length === 0}>
+              使用已有音色
+              {voices.length === 0 ? "（暂无）" : ""}
+            </Radio>
+          </RadioGroup>
         </Form.Slot>
+
+        {mode === "upload" ? (
+          <>
+            <Form.Slot label="参考音频（3-30 秒）">
+              <Upload
+                accept={ACCEPT_AUDIO}
+                limit={1}
+                beforeUpload={({ file }) => {
+                  const f = file.fileInstance as File;
+                  const ext = (f.name.split(".").pop() || "").toLowerCase();
+                  if (!ALLOWED_AUDIO_EXTS.includes(ext)) {
+                    Toast.warning(
+                      `参考声纹仅支持 ${ALLOWED_AUDIO_EXTS.join(" / ")}；不接受视频或容器格式`,
+                    );
+                    return { fileInstance: f, status: "validateFail" };
+                  }
+                  setRefFile(f);
+                  return false;
+                }}
+                onRemove={() => setRefFile(null)}
+              >
+                <div
+                  style={{
+                    border: "2px dashed var(--vc-color-border)",
+                    borderRadius: "var(--vc-radius-sm)",
+                    padding: "var(--vc-spacing-lg)",
+                    textAlign: "center",
+                    color: "var(--vc-color-text-secondary)",
+                  }}
+                >
+                  <IconUpload /> 点击上传参考声纹
+                  <div style={{ fontSize: 12, marginTop: 4 }}>
+                    支持 {ALLOWED_AUDIO_EXTS.join(" / ")}；视频文件请先抽取音轨
+                  </div>
+                </div>
+              </Upload>
+            </Form.Slot>
+
+            <Form.Slot label="音色名称（可选）">
+              <Input
+                value={speakerName}
+                onChange={setSpeakerName}
+                placeholder="便于后续识别，如 张三"
+              />
+            </Form.Slot>
+          </>
+        ) : (
+          <Form.Slot label="选择已有音色">
+            <Select
+              value={voiceId}
+              onChange={(v) => {
+                const id = String(v);
+                setVoiceId(id);
+                const found = voices.find((x) => x.id === id);
+                if (found) setProvider(found.provider_name);
+              }}
+              style={{ width: "100%" }}
+              optionList={voices.map((v) => ({
+                label: `${v.id}（${v.provider_name}）`,
+                value: v.id,
+              }))}
+              placeholder="选择音色"
+            />
+            {selectedVoice?.sample_url && (
+              <audio
+                controls
+                src={selectedVoice.sample_url}
+                style={{ width: "100%", marginTop: 8 }}
+              />
+            )}
+          </Form.Slot>
+        )}
 
         <Form.Slot label="合成文本">
           <TextArea
@@ -118,15 +221,7 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
             onChange={setText}
             rows={4}
             maxLength={10000}
-            placeholder="用克隆出的音色合成这段文字"
-          />
-        </Form.Slot>
-
-        <Form.Slot label="音色名称（可选）">
-          <Input
-            value={speakerName}
-            onChange={setSpeakerName}
-            placeholder="便于后续识别，如 张三"
+            placeholder="用此音色合成这段文字"
           />
         </Form.Slot>
 
@@ -137,11 +232,17 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
             placeholder="使用默认"
             showClear
             style={{ width: "100%" }}
+            disabled={mode === "existing"}
             optionList={providers.map((p) => ({
               label: p.is_default ? `${p.name}（默认）` : p.name,
               value: p.name,
             }))}
           />
+          {mode === "existing" && (
+            <Text type="tertiary" size="small" style={{ marginTop: 4 }}>
+              使用已有音色时 Provider 自动锁定为该音色归属
+            </Text>
+          )}
         </Form.Slot>
       </Form>
     </TaskCreationDrawer>

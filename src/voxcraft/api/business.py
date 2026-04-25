@@ -318,6 +318,8 @@ async def list_voices(session: Session = Depends(get_session)):
         voices.append(VoiceSchema(
             id=v.id, language="zh",
             provider_name=v.provider_name, source="cloned",
+            # 试听端点：浏览器直连读流；只对 vx_ 前缀生效（见 voices.get_voice_sample）
+            sample_url=f"/api/tts/voices/{v.id}/sample",
         ))
     return VoicesResponse(voices=voices)
 
