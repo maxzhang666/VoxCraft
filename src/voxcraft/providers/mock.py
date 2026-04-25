@@ -68,6 +68,7 @@ class InMemoryMockTtsProvider(TtsProvider):
 
     def synthesize(
         self, text: str, voice_id: str, speed: float = 1.0, format: str = "wav",
+        reference_audio_path: str | None = None,  # noqa: ARG002 — mock 忽略
     ) -> bytes:
         return b"RIFF....WAVEmock"
 
@@ -119,6 +120,7 @@ class InMemoryMockCloningProvider(CloningProvider):
 
     def synthesize(
         self, text: str, voice_id: str, speed: float = 1.0, format: str = "wav",
+        reference_audio_path: str | None = None,  # noqa: ARG002 — mock 忽略
     ) -> bytes:
         return b"RIFFmockclonewave"
 

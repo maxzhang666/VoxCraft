@@ -179,9 +179,12 @@ def run_video_translate(
         lru.ensure_loaded(tts_inst)
 
         # clone_voice：若开启且 Provider 是 CloningProvider，用原音频做 zero-shot 克隆
+        # 视频原音频路径同时作为参考声纹路径透传给 synthesize（VoxCPM 等需要）
         voice_id: str = tts_inst.name
+        ref_audio_path: str | None = None
         if meta.get("clone_voice") and _is_cloning_provider(tts_inst):
             voice_id = _prepare_clone_voice(tts_inst, str(audio_path))
+            ref_audio_path = str(audio_path)
 
         seg_audio_paths: list[Path] = []
         measured_durations: list[float] = []
@@ -189,6 +192,7 @@ def run_video_translate(
         for idx, p in enumerate(planned):
             audio_bytes = tts_inst.synthesize(
                 p.text, voice_id=voice_id, speed=p.speed, format="wav",
+                reference_audio_path=ref_audio_path,
             )
             path = scratch_dir / f"seg_{idx:04d}.wav"
             path.write_bytes(audio_bytes)

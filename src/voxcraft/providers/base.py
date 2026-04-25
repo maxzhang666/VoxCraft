@@ -131,7 +131,15 @@ class TtsProvider(Provider):
         voice_id: str,
         speed: float = 1.0,
         format: str = "wav",
-    ) -> bytes: ...
+        reference_audio_path: str | None = None,
+    ) -> bytes:
+        """返回合成后的音频字节。
+
+        ``reference_audio_path`` 是可选的参考声纹音频路径——zero-shot 克隆模型
+        （VoxCPM / IndexTTS 等）需要它做 speaker embedding；预设音色 Provider
+        （Piper 等）应忽略此参数。worker 层根据 voice_id 反查 voice_refs 表得到。
+        """
+        ...
 
     @abstractmethod
     def list_voices(self) -> list[Voice]: ...

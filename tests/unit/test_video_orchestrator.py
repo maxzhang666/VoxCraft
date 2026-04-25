@@ -79,7 +79,7 @@ class _WavTtsProvider(TtsProvider):
             loaded=self._loaded,
         )
 
-    def synthesize(self, text, voice_id, speed=1.0, format="wav") -> bytes:
+    def synthesize(self, text, voice_id, speed=1.0, format="wav", reference_audio_path=None) -> bytes:  # noqa: ARG002
         return _tiny_wav(duration=0.5)
 
     def list_voices(self) -> list[Voice]:

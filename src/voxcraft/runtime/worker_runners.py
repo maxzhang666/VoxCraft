@@ -175,6 +175,22 @@ def _run_asr(req: JobRequest, inst, emit: EmitFn | None) -> JobResult:
     )
 
 
+def _lookup_voice_ref_path(voice_id: str) -> str | None:
+    """voice_id → voice_refs.reference_audio_path；不存在或非 vx_ 前缀返回 None。
+
+    Zero-shot 克隆 Provider（VoxCPM 等）合成时需要参考音频；其他 Provider 忽略。
+    """
+    if not voice_id or not voice_id.startswith("vx_"):
+        return None
+    from sqlmodel import Session
+    from voxcraft.db.engine import get_engine
+    from voxcraft.db.models import VoiceRef
+
+    with Session(get_engine()) as s:
+        row = s.get(VoiceRef, voice_id)
+    return row.reference_audio_path if row else None
+
+
 def _run_tts(req: JobRequest, inst) -> JobResult:
     assert isinstance(inst, TtsProvider)
     meta = req.request_meta
@@ -182,7 +198,11 @@ def _run_tts(req: JobRequest, inst) -> JobResult:
     voice_id = meta["voice_id"]
     speed = meta.get("speed", 1.0)
     fmt = meta.get("format", "wav")
-    audio = inst.synthesize(text, voice_id=voice_id, speed=speed, format=fmt)
+    ref_path = _lookup_voice_ref_path(voice_id)
+    audio = inst.synthesize(
+        text, voice_id=voice_id, speed=speed, format=fmt,
+        reference_audio_path=ref_path,
+    )
 
     suffix = {"wav": ".wav", "mp3": ".mp3", "ogg": ".ogg"}[fmt]
     out = Path(req.output_dir) / f"{req.job_id}{suffix}"
@@ -199,14 +219,18 @@ def _run_clone(req: JobRequest, inst) -> JobResult:
     speaker_name = meta.get("speaker_name")
 
     voice_id = inst.clone_voice(req.source_path, speaker_name=speaker_name)
-    audio = inst.synthesize(text, voice_id=voice_id)
 
+    # 先把参考音频持久化到稳定路径，再 synthesize 时把这个路径传给 Provider
     out_dir = Path(req.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     ref_dir = out_dir / "voices"
     ref_dir.mkdir(parents=True, exist_ok=True)
     ref_final = ref_dir / f"{voice_id}{Path(req.source_path).suffix}"
     shutil.copy2(req.source_path, ref_final)
+
+    audio = inst.synthesize(
+        text, voice_id=voice_id, reference_audio_path=str(ref_final),
+    )
 
     out_path = out_dir / f"{req.job_id}.wav"
     out_path.write_bytes(audio)
