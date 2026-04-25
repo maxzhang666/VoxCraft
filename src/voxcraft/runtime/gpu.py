@@ -66,16 +66,17 @@ def empty_cache() -> None:
 def vram_usage_mb() -> tuple[int, int]:
     """返回 (used_mb, total_mb)；无 GPU 时返回 (0, 0)。
 
-    torch 路径：used = 本进程 allocated；total = 0 号卡总显存。
-    pynvml 路径：used = 全局 used（driver 视角，含其他进程）；total = 0 号卡总显存。
-    语义不完全一致，但前端仅展示总量占用趋势，不做进程级归因。
+    used 为 driver-level 全局占用（与 nvidia-smi 一致），不区分进程归属。
+    之前用 torch.cuda.memory_allocated() 只统计本 Python 进程通过 PyTorch
+    allocator 申请的缓存——主进程不加载 torch 模型时永远 0；CTranslate2 /
+    ffmpeg 等非 torch 进程的占用也漏统计。改用 mem_get_info() 一致全局视角。
     """
     torch = _torch_cuda()
     if torch is not None:
         try:
-            used = torch.cuda.memory_allocated() // (1024 * 1024)
-            total = torch.cuda.get_device_properties(0).total_memory // (1024 * 1024)
-            return (int(used), int(total))
+            free, total = torch.cuda.mem_get_info(0)
+            used = total - free
+            return (int(used // (1024 * 1024)), int(total // (1024 * 1024)))
         except Exception:  # noqa: BLE001
             return (0, 0)
 
