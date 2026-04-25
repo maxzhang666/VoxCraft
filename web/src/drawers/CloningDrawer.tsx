@@ -13,6 +13,13 @@ interface Props {
   onSuccess: () => void;
 }
 
+// 参考音频白名单：mp4 等视频/容器格式不支持（OS 文件对话框 audio/* 过滤不严，
+// 用户能误选；用扩展名兜底 + Toast 给明确提示）
+const ALLOWED_AUDIO_EXTS = ["wav", "mp3", "m4a", "ogg", "flac", "aac"];
+const ACCEPT_AUDIO =
+  "audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/flac,audio/x-m4a,audio/aac," +
+  ALLOWED_AUDIO_EXTS.map((e) => "." + e).join(",");
+
 export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
   const [refFile, setRefFile] = useState<File | null>(null);
   const [text, setText] = useState("");
@@ -72,10 +79,18 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
       <Form labelPosition="top">
         <Form.Slot label="参考音频（3-30 秒）">
           <Upload
-            accept="audio/*"
+            accept={ACCEPT_AUDIO}
             limit={1}
             beforeUpload={({ file }) => {
-              setRefFile(file.fileInstance as File);
+              const f = file.fileInstance as File;
+              const ext = (f.name.split(".").pop() || "").toLowerCase();
+              if (!ALLOWED_AUDIO_EXTS.includes(ext)) {
+                Toast.warning(
+                  `参考声纹仅支持 ${ALLOWED_AUDIO_EXTS.join(" / ")}；不接受视频或容器格式`,
+                );
+                return { fileInstance: f, status: "validateFail" };
+              }
+              setRefFile(f);
               return false;
             }}
             onRemove={() => setRefFile(null)}
@@ -90,6 +105,9 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
               }}
             >
               <IconUpload /> 点击上传参考声纹
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                支持 {ALLOWED_AUDIO_EXTS.join(" / ")}；视频文件请先抽取音轨
+              </div>
             </div>
           </Upload>
         </Form.Slot>
