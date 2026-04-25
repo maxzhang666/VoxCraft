@@ -172,9 +172,12 @@ export function JobCard(props: Props) {
       )}
 
       {job.error_code && (
-        <Text type="danger" size="small">
-          [{job.error_code}] {(job.error_message ?? "").slice(0, 140)}
-          {(job.error_message ?? "").length > 140 && "…"}
+        <Text
+          type={job.status === "interrupted" ? "warning" : "danger"}
+          size="small"
+          style={{ whiteSpace: "pre-wrap", display: "block" }}
+        >
+          [{job.error_code}] {job.error_message ?? ""}
         </Text>
       )}
 

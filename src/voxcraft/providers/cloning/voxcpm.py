@@ -19,9 +19,15 @@ import io
 import uuid
 import wave
 
+import structlog
+
 from voxcraft.errors import InferenceError, ModelLoadError
 from voxcraft.providers import capabilities
 from voxcraft.providers.base import CloningProvider, ConfigField, ProviderInfo, Voice
+from voxcraft.runtime.gpu import resolve_device, vram_usage_mb
+
+
+log = structlog.get_logger()
 
 
 def _f32_to_wav_bytes(audio, sample_rate: int) -> bytes:
@@ -98,6 +104,18 @@ class VoxCpmCloningProvider(CloningProvider):
             ) from e
 
         load_denoiser = str(self.config.get("load_denoiser", "false")).lower() == "true"
+        target_device = resolve_device(self.config.get("device"))
+        used_mb_before, total_mb = vram_usage_mb()
+        log.info(
+            "voxcpm.load.start",
+            provider=self.name,
+            model_dir=self.config.get("model_dir"),
+            target_device=target_device,
+            load_denoiser=load_denoiser,
+            vram_used_mb_before=used_mb_before,
+            vram_total_mb=total_mb,
+            vram_free_mb=max(0, total_mb - used_mb_before),
+        )
         try:
             model_dir = self.config["model_dir"]
             self._model = VoxCPM.from_pretrained(
@@ -122,6 +140,15 @@ class VoxCpmCloningProvider(CloningProvider):
             if isinstance(sr, int) and sr > 0:
                 self._sample_rate = sr
 
+            used_mb_after, _ = vram_usage_mb()
+            log.info(
+                "voxcpm.load.done",
+                provider=self.name,
+                device=target_device,
+                sample_rate=self._sample_rate,
+                vram_used_mb_after=used_mb_after,
+                vram_consumed_mb=max(0, used_mb_after - used_mb_before),
+            )
             self._loaded = True
         except KeyError as e:
             raise ModelLoadError(

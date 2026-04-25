@@ -33,7 +33,13 @@ def mark_stale_jobs_interrupted(engine: Engine) -> int:
             j.status = "interrupted"
             j.error_code = "INTERRUPTED"
             j.error_message = (
-                "Process restarted while this job was active; click 「继续」 to resume."
+                "进程在该任务运行期间退出（exit/SIGKILL/重启）。"
+                "常见原因：① OOM —— 模型显存或主机内存不足，"
+                "Linux 容器收到 SIGKILL（exit 137），日志里通常看不到 Python 异常；"
+                "② 进程主动退出或宿主机重启。"
+                "排查：检查 docker logs 末尾、宿主 dmesg、nvidia-smi 显存占用。"
+                "如果是 OOM：换更小的模型（如 voxcpm-0.5b 替代 voxcpm-2）、"
+                "降量化精度、或把 device 切回 cpu。点「继续」会原样重试。"
             )
             # finished_at 留空：任务并未真正结束，retry 时会重置
             session.add(j)
