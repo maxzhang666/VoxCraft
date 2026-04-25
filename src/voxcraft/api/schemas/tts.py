@@ -25,3 +25,13 @@ class VoiceSchema(BaseModel):
 
 class VoicesResponse(BaseModel):
     voices: list[VoiceSchema]
+
+
+class VoiceExtractResponse(BaseModel):
+    """POST /api/tts/voices/extract 返回：抽取声纹后的 voice 信息。"""
+
+    voice_id: str
+    speaker_name: str | None = None
+    provider_name: str
+    reference_audio_path: str
+    duration_seconds: float | None = None

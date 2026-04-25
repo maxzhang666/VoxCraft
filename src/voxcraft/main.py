@@ -20,6 +20,7 @@ from voxcraft.api import (
     models_library,
     oai_compat,
     video_translate,
+    voices,
 )
 from voxcraft.api.error_handlers import register_error_handlers
 from voxcraft.config import get_settings
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_settings.router, prefix="/api")
     app.include_router(jobs.router, prefix="/api")
     app.include_router(business.router, prefix="/api")
+    app.include_router(voices.router, prefix="/api")
     app.include_router(video_translate.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
     app.include_router(models_library.router, prefix="/api")
