@@ -1,7 +1,12 @@
 import { Card, Descriptions, Typography } from "@douyinfe/semi-ui";
 import { useCallback, useEffect, useState } from "react";
 
-import { getHealth, getModels, type ModelsResponse } from "@/api/system";
+import {
+  getHealth,
+  getModels,
+  type HealthResponse,
+  type ModelsResponse,
+} from "@/api/system";
 import { GpuGauge } from "@/components/GpuGauge";
 import { useSse } from "@/hooks/useSse";
 import { useSystem } from "@/stores/SystemContext";
@@ -10,7 +15,7 @@ const { Title } = Typography;
 
 export function SystemDiagnosis() {
   const sys = useSystem();
-  const [health, setHealth] = useState<{ status: string; db: boolean; gpu: boolean } | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [models, setModels] = useState<ModelsResponse | null>(null);
 
   const refresh = useCallback(() => {
@@ -43,7 +48,12 @@ export function SystemDiagnosis() {
             { key: "版本", value: `v${sys.version}` },
             { key: "服务状态", value: health?.status ?? "loading" },
             { key: "数据库", value: health?.db ? "✅ 正常" : "❌ 不可用" },
-            { key: "GPU 可用", value: sys.gpu.available ? "是" : "否" },
+            {
+              key: "GPU 可用",
+              value: sys.gpu.available
+                ? sys.gpu.name ?? "是"
+                : "否",
+            },
             { key: "当前驻留", value: sys.activeProvider?.name ?? "无" },
             { key: "队列长度", value: String(sys.queueSize) },
             { key: "SSE", value: sys.sseConnected ? "● 已连接" : "● 断线" },

@@ -15,7 +15,12 @@ export interface SystemState {
   version: string;
   activeProvider: { kind: string; name: string } | null;
   queueSize: number;
-  gpu: { usedMb: number; totalMb: number; available: boolean };
+  gpu: {
+    usedMb: number;
+    totalMb: number;
+    available: boolean;
+    name: string | null;
+  };
   sseConnected: boolean;
 }
 
@@ -27,7 +32,7 @@ const INITIAL: SystemState = {
   version: "0.1.0",
   activeProvider: null,
   queueSize: 0,
-  gpu: { usedMb: 0, totalMb: 0, available: false },
+  gpu: { usedMb: 0, totalMb: 0, available: false, name: null },
   sseConnected: false,
 };
 
@@ -41,7 +46,12 @@ export function SystemProvider({ children }: { children: ReactNode }) {
       const h = await getHealth();
       setState((s) => ({
         ...s,
-        gpu: { ...s.gpu, available: h.gpu },
+        gpu: {
+          available: h.gpu.available,
+          usedMb: h.gpu.used_mb,
+          totalMb: h.gpu.total_mb,
+          name: h.gpu.name,
+        },
       }));
     } catch {
       // ignore；错误已由 axios 拦截器提示

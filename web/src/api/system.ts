@@ -1,9 +1,16 @@
 import { api } from "./client";
 
+export interface GpuInfo {
+  available: boolean;
+  used_mb: number;
+  total_mb: number;
+  name: string | null;
+}
+
 export interface HealthResponse {
   status: "ok" | "degraded" | "down";
   db: boolean;
-  gpu: boolean;
+  gpu: GpuInfo;
 }
 
 export interface ModelsResponse {

@@ -4,10 +4,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
-from voxcraft.api.schemas.system import HealthResponse, ModelsResponse
+from voxcraft.api.schemas.system import GpuInfo, HealthResponse, ModelsResponse
 from voxcraft.db.engine import get_engine
 from voxcraft.db.models import Provider
-from voxcraft.runtime.gpu import is_cuda_available
+from voxcraft.runtime.gpu import device_name, is_cuda_available, vram_usage_mb
 
 
 router = APIRouter(tags=["health"])
@@ -20,7 +20,18 @@ def get_session():
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", db=True, gpu=is_cuda_available())
+    available = is_cuda_available()
+    if available:
+        used_mb, total_mb = vram_usage_mb()
+        gpu = GpuInfo(
+            available=True,
+            used_mb=used_mb,
+            total_mb=total_mb,
+            name=device_name(),
+        )
+    else:
+        gpu = GpuInfo()
+    return HealthResponse(status="ok", db=True, gpu=gpu)
 
 
 @router.get("/models", response_model=ModelsResponse)
