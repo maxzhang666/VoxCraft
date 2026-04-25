@@ -141,10 +141,19 @@ CATALOG: list[CatalogEntry] = [
         provider_class="VoxCpmCloningProvider",
         mirror_authority="official",
     ),
-    # IndexTTS-2：主权重 ~4.3GB（gpt.pth 3.25G + s2mel.pth 1.12G）+ qwen 情绪子模型
-    # ~700MB，合计约 5GB。首次 infer 还会自动从 HF 拉 amphion/MaskGCT、funasr/campplus、
-    # facebook/w2v-bert-2.0 ~1.5GB 子模型（不计入此仓库 size）。
-    # 注：仅集成 v2；v1.5 API 与 v2 不兼容，不在 catalog 中。
+    CatalogEntry(
+        key="indextts-1.5",
+        label="IndexTTS 1.5 (非商业)",
+        kind="cloning",
+        sources={
+            "hf": "IndexTeam/Index-TTS",
+            "ms": "IndexTeam/IndexTTS-1.5",
+        },
+        size_mb=1500,
+        recommend_tier="mid",
+        provider_class="IndexTtsProvider",
+        mirror_authority="official",
+    ),
     CatalogEntry(
         key="indextts-2",
         label="IndexTTS 2 (非商业)",
@@ -153,7 +162,7 @@ CATALOG: list[CatalogEntry] = [
             "hf": "IndexTeam/IndexTTS-2",
             "ms": "IndexTeam/IndexTTS-2",
         },
-        size_mb=5120,
+        size_mb=2048,
         recommend_tier="high",
         provider_class="IndexTtsProvider",
         mirror_authority="official",

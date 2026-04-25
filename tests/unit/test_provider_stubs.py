@@ -41,11 +41,4 @@ def test_stub_load_raises_model_load_error_without_deps(cls, config):
     with pytest.raises(ModelLoadError) as exc:
         p.load()
     assert exc.value.code == "MODEL_LOAD_ERROR"
-    msg = exc.value.message.lower()
-    # 两种合理失败：依赖未装 / 依赖装了但 model_dir 路径无效
-    assert (
-        "not installed" in msg
-        or "not found" in msg
-        or "failed" in msg
-        or "missing" in msg
-    )
+    assert "not installed" in exc.value.message.lower() or "failed" in exc.value.message.lower()

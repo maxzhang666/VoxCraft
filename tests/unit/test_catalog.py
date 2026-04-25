@@ -12,8 +12,8 @@ from voxcraft.models_lib.catalog import (
 )
 
 
-def test_catalog_has_ten_entries():
-    assert len(CATALOG) == 10
+def test_catalog_has_eleven_entries():
+    assert len(CATALOG) == 11
 
 
 def test_catalog_keys_unique():
@@ -62,6 +62,7 @@ def test_catalog_cloning_entries_include_voxcpm_indextts():
     cloning_keys = {e.key for e in CATALOG if e.kind == "cloning"}
     assert "voxcpm-0.5b" in cloning_keys
     assert "voxcpm-2" in cloning_keys
+    assert "indextts-1.5" in cloning_keys
     assert "indextts-2" in cloning_keys
 
 
