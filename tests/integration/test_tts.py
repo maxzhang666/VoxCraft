@@ -103,10 +103,13 @@ def test_tts_no_provider_returns_400(client):
 
 
 def test_tts_accepts_cloning_provider_by_name(client, mock_all_registered):
-    """/api/tts 显式指定 cloning kind 的 Provider 名时不应报"No tts provider"。
+    """/api/tts 显式指定 cloning kind 的 Provider 名 → 路由放行 + worker 也能解析。
 
-    回归 #issue：TtsDrawer 把 tts + cloning 合并显示，用户选 voxcpm-2（cloning kind）
-    时路由曾硬限 kind=tts → "No tts provider available named voxcpm-2"。
+    回归两层 bug：
+    1. _select_provider 路由层硬限 kind="tts" → "No tts provider available named X"
+    2. run_job 二次查询 Provider 仍硬限 kind="tts" → "Provider disappeared: X"
+       （PROVIDER_NOT_FOUND，job 直接 failed）
+    本测试覆盖到 worker 阶段，确保两层都接受 cloning Provider。
     """
     p = client.post("/api/admin/providers", json={
         "kind": "cloning",
@@ -119,5 +122,9 @@ def test_tts_accepts_cloning_provider_by_name(client, mock_all_registered):
         "/api/tts",
         json={"text": "hi", "voice_id": "anything", "provider": p["name"]},
     )
-    # 路由放行（cloning Provider 也能合成）
     assert r.status_code == 202, r.text
+
+    final = wait_for_job(client, r.json()["job_id"])
+    assert final["status"] == "succeeded", final
+    assert final["provider_name"] == "mock-clone"
+    assert (final.get("error_code") or None) is None

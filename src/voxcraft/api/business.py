@@ -372,7 +372,7 @@ async def run_job(job_id: str, app_state) -> None:
         else:
             p_row = session.exec(
                 select(Provider).where(
-                    Provider.kind == _kind_to_provider_kind(kind),
+                    Provider.kind.in_(_candidate_provider_kinds(kind)),  # type: ignore[attr-defined]
                     Provider.name == job.provider_name,
                     Provider.enabled == True,  # noqa: E712
                 )
@@ -442,6 +442,17 @@ async def _finalize_video_translate_warnings(job_id: str, warnings: list[str]) -
 def _kind_to_provider_kind(kind: str) -> str:
     # Job.kind ∈ {asr, tts, clone, separate}；Provider.kind ∈ {asr, tts, cloning, separator}
     return {"clone": "cloning", "separate": "separator"}.get(kind, kind)
+
+
+def _candidate_provider_kinds(job_kind: str) -> tuple[str, ...]:
+    """Job.kind → 候选 Provider.kind 列表。
+
+    TTS Job 接受 tts + cloning Provider（CloningProvider 是 TtsProvider 子类，
+    UI 合并展示，Job 二次查询也得兼容）。其他 Job 只查同名 kind。
+    """
+    if job_kind == "tts":
+        return ("tts", "cloning")
+    return (_kind_to_provider_kind(job_kind),)
 
 
 async def _finalize_failure(
