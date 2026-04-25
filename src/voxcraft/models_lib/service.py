@@ -158,6 +158,11 @@ class ModelDownloadService:
             pass
 
     async def _do_download(self, model_id: int) -> None:
+        # UI 改完代理未重启场景：每次下载前从 DB 重新加载并注入 env
+        # 注入是 process 全局；同进程后续 huggingface_hub / httpx 调用立即生效
+        from voxcraft.runtime.proxy import reload_proxy_from_db
+        reload_proxy_from_db(self._engine)
+
         model = self._load_model(model_id)
         target = self._models_dir / model.catalog_key
         # 从 catalog 取预期总大小（用于进度估算）；custom 模型无 catalog 则 None

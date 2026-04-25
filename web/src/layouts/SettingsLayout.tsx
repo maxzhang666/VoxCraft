@@ -9,6 +9,7 @@ const SETTINGS_ITEMS = [
   { itemKey: "/settings/models", text: t.settingsNav.models },
   { itemKey: "/settings/models-library", text: t.settingsNav.modelsLibrary },
   { itemKey: "/settings/llm", text: t.settingsNav.llm },
+  { itemKey: "/settings/proxy", text: t.settingsNav.proxy },
   { itemKey: "/settings/system", text: t.settingsNav.system },
   { itemKey: "/settings/jobs", text: t.settingsNav.jobs },
 ];

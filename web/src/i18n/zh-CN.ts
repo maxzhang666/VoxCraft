@@ -14,6 +14,7 @@ export const t = {
     models: "模型管理",
     modelsLibrary: "模型库",
     llm: "LLM 配置",
+    proxy: "网络代理",
     system: "系统诊断",
     jobs: "任务队列",
   },

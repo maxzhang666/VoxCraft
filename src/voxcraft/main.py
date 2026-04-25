@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from voxcraft.api import (
     admin,
     admin_llm,
+    admin_settings,
     business,
     events,
     health,
@@ -30,6 +31,7 @@ from voxcraft.logging import setup_logging
 from voxcraft.models_lib.service import ModelDownloadService
 from voxcraft.runtime.lru import LruOne
 from voxcraft.runtime.pool_scheduler import PoolScheduler
+from voxcraft.runtime.proxy import reload_proxy_from_db
 from voxcraft.runtime.scheduler import InProcessScheduler
 
 
@@ -43,6 +45,8 @@ _STATIC_DIR = Path("/app/static")
 async def lifespan(app: FastAPI):
     run_upgrade_head()
     engine = get_engine()
+    # 代理注入要早于任何后续可能触发模型下载/HTTP 请求的步骤
+    proxy_active = reload_proxy_from_db(engine)
     inserted = seed_default_providers(engine)
     manual_scanned = scan_existing_models(engine)
     bus = get_bus()
@@ -77,6 +81,8 @@ async def lifespan(app: FastAPI):
         manual_models_scanned=manual_scanned,
         orphan_downloads_cleaned=orphans,
         scheduler_backend=settings.scheduler_backend,
+        proxy_hf_endpoint=proxy_active.get("hf_endpoint") or None,
+        proxy_https=bool(proxy_active.get("https_proxy")),
     )
     try:
         yield
@@ -97,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(admin_llm.router, prefix="/api")
+    app.include_router(admin_settings.router, prefix="/api")
     app.include_router(jobs.router, prefix="/api")
     app.include_router(business.router, prefix="/api")
     app.include_router(video_translate.router, prefix="/api")

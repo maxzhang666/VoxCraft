@@ -16,6 +16,7 @@ import { GlobalJobsQueue } from "@/pages/settings/GlobalJobsQueue";
 import { LlmConfig } from "@/pages/settings/LlmConfig";
 import { ModelsLibrary } from "@/pages/settings/ModelsLibrary";
 import { ModelsManage } from "@/pages/settings/ModelsManage";
+import { ProxySettings } from "@/pages/settings/ProxySettings";
 import { SystemDiagnosis } from "@/pages/settings/SystemDiagnosis";
 
 export const router = createBrowserRouter(
@@ -38,6 +39,7 @@ export const router = createBrowserRouter(
             { path: "models", element: <ModelsManage /> },
             { path: "models-library", element: <ModelsLibrary /> },
             { path: "llm", element: <LlmConfig /> },
+            { path: "proxy", element: <ProxySettings /> },
             { path: "system", element: <SystemDiagnosis /> },
             { path: "jobs", element: <GlobalJobsQueue /> },
           ],
