@@ -89,6 +89,13 @@ class VoxCpmCloningProvider(CloningProvider):
                 "voxcpm not installed; install on deployment host: pip install voxcpm",
                 details={"provider": self.name},
             ) from e
+        except OSError as e:
+            # mac arm64 上 voxcpm 拉的 torchaudio 与 torch wheel 的 C++ ABI 可能不匹配
+            # （Linux GPU 部署不会触发）；用 ModelLoadError 暴露给上层而非裸 OSError
+            raise ModelLoadError(
+                f"voxcpm import failed (likely torch/torchaudio ABI mismatch): {e}",
+                details={"provider": self.name},
+            ) from e
 
         load_denoiser = str(self.config.get("load_denoiser", "false")).lower() == "true"
         try:

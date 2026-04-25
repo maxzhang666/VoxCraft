@@ -31,6 +31,8 @@ dependencies = [
     # mac arm64 自带 CPU/MPS wheel，无需自定义索引。仍支持 Pascal (sm_61)，2.7 才会砍。
     "torch>=2.6,<2.7",
     "nvidia-ml-py>=12",
+    # 声纹克隆 Provider：默认随项目装；用户在「模型库」下载 VoxCPM 模型后即可用
+    "voxcpm>=2.0",
 ]
 
 [project.optional-dependencies]
