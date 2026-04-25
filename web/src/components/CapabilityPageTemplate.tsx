@@ -1,6 +1,6 @@
 import { Button, Empty, Space, Typography } from "@douyinfe/semi-ui";
-import { IconPlus } from "@douyinfe/semi-icons";
-import type { ReactNode } from "react";
+import { IconPlus, IconRefresh } from "@douyinfe/semi-icons";
+import { useState, type ReactNode } from "react";
 
 import { t } from "@/i18n/zh-CN";
 
@@ -10,6 +10,8 @@ interface Props {
   title: string;
   icon?: string; // emoji
   onCreate: () => void;
+  /** 可选；提供则 header 渲染刷新按钮（带 loading）。各任务页直接传入 reload。 */
+  onRefresh?: () => void | Promise<void>;
   createLabel?: string;
   filters?: ReactNode;
   isEmpty?: boolean;
@@ -20,11 +22,22 @@ export function CapabilityPageTemplate({
   title,
   icon,
   onCreate,
+  onRefresh,
   createLabel = t.actions.create,
   filters,
   isEmpty,
   children,
 }: Props) {
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    if (!onRefresh) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       <div
@@ -39,9 +52,20 @@ export function CapabilityPageTemplate({
           {icon && <span style={{ marginRight: 8 }}>{icon}</span>}
           {title}
         </Title>
-        <Button theme="solid" icon={<IconPlus />} onClick={onCreate}>
-          {createLabel}
-        </Button>
+        <Space>
+          {onRefresh && (
+            <Button
+              icon={<IconRefresh />}
+              onClick={handleRefresh}
+              loading={refreshing}
+            >
+              刷新
+            </Button>
+          )}
+          <Button theme="solid" icon={<IconPlus />} onClick={onCreate}>
+            {createLabel}
+          </Button>
+        </Space>
       </div>
 
       {filters && (

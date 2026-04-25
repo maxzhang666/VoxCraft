@@ -40,6 +40,7 @@ export function VideoTranslatePage() {
         title="视频语音级翻译"
         icon="🎬"
         onCreate={() => setDrawerOpen(true)}
+        onRefresh={reload}
         createLabel="+ 新建视频翻译"
         isEmpty={jobs.length === 0}
       >

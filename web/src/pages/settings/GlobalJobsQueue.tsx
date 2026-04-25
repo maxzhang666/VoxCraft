@@ -7,6 +7,7 @@ import {
   Toast,
   Typography,
 } from "@douyinfe/semi-ui";
+import { IconRefresh } from "@douyinfe/semi-icons";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useState } from "react";
 
@@ -150,6 +151,9 @@ export function GlobalJobsQueue() {
           optionList={STATUS_OPTIONS}
           style={{ width: 160 }}
         />
+        <Button icon={<IconRefresh />} onClick={reload} loading={loading}>
+          刷新
+        </Button>
       </Space>
       <Table
         columns={columns}

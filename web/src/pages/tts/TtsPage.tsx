@@ -40,6 +40,7 @@ export function TtsPage() {
         title="语音合成"
         icon="🔊"
         onCreate={() => setDrawerOpen(true)}
+        onRefresh={reload}
         createLabel="+ 新建合成"
         isEmpty={jobs.length === 0}
       >

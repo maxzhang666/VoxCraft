@@ -40,6 +40,7 @@ export function SeparatorPage() {
         title="人声分离"
         icon="🎸"
         onCreate={() => setDrawerOpen(true)}
+        onRefresh={reload}
         createLabel="+ 新建分离"
         isEmpty={jobs.length === 0}
       >

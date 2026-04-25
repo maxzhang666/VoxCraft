@@ -40,6 +40,7 @@ export function AsrPage() {
         title="语音转文字"
         icon="🎧"
         onCreate={() => setDrawerOpen(true)}
+        onRefresh={reload}
         createLabel="+ 新建转录"
         isEmpty={jobs.length === 0}
       >
