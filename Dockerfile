@@ -28,6 +28,15 @@ FROM python:3.13-slim-bookworm AS py-build
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1
 
+# voxcpm 引入的部分 transitive deps（umap-learn / wetext 等）在 linux+py3.13 上
+# 可能没有预编 wheel，需要 sdist 源码编译；slim base 默认无 gcc 会让 uv sync 退出 1。
+# 装 build-essential + python3-dev 覆盖 source-build 需要；仅 py-build 中间层，
+# 不影响 runtime image 大小。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential python3-dev \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
