@@ -2,9 +2,11 @@
 name = "voxcraft"
 version = "0.1.0"
 description = "自托管多模态音频推理服务 (ASR / TTS / 克隆 / 人声分离)"
-# 3.12 是 IndexTTS 的实际兼容上限：IndexTTS pin numpy==1.26.2，PyPI 上 cp313 wheel
-# 从 numpy 1.26.4 才有，1.26.2 只有 sdist，3.13 下编译大概率失败。降到 3.12 走 wheel。
-requires-python = ">=3.12,<3.13"
+# 3.11 是 IndexTTS 依赖矩阵的甜蜜点：IndexTTS pin 死的几个版本（numba==0.58.1 /
+# llvmlite==0.41.1 / numpy==1.26.2 / transformers==4.52.1）在 PyPI 都有 cp311 预编 wheel；
+# cp312 起 numba 0.58.1 / llvmlite 0.41.1 没有 wheel（numba 0.59 / llvmlite 0.42 起才支持），
+# sdist 编译需要 LLVM 14 + 不被 0.58.1 正式支持的 cp312 PyAPI，极易失败。
+requires-python = ">=3.11,<3.12"
 readme = "README.md"
 license = { text = "MIT" }
 
