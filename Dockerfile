@@ -32,15 +32,17 @@ COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
-# 优先复制锁文件 + pyproject，利用 layer 缓存
+# 只装第三方依赖，**不**装项目本身。让 .venv 内容只受 pyproject/uv.lock 影响：
+# pyproject/uv.lock 不变，.venv 字节级稳定 → runtime 阶段 COPY .venv 那层 hash 不变 →
+# 客户端 docker pull 命中缓存层，不重下 ~3.2GB。
+# 项目代码靠 runtime 阶段的 PYTHONPATH=/app/src 加载，无需写入 site-packages。
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-# 再复制源码
+# 源码 + 配置仅复制不安装
 COPY src ./src
 COPY alembic.ini ./
 COPY migrations ./migrations
-RUN uv sync --frozen --no-dev
 
 # -------- Stage 3: Runtime --------
 FROM python:3.13-slim-bookworm AS runtime
@@ -52,6 +54,7 @@ FROM python:3.13-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH=/app/src \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
@@ -62,8 +65,15 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# 拆分 COPY 让 .venv（大头不变）和 src（小头常变）各成一层：
+# - .venv 层 ~3.2GB：仅当 pyproject/uv.lock 变化时失效，日常代码提交 client pull 命中缓存
+# - src / migrations / alembic.ini 层：每次代码改动重做，但只有 ~10MB
+# - static 层独立：前端改动也不波及 Python 层
 # py-build 与 runtime 共用 python:3.13-slim-bookworm，venv shebang 的 /usr/local/bin/python3.13 在两阶段一致
-COPY --from=py-build /app /app
+COPY --from=py-build /app/.venv /app/.venv
+COPY --from=py-build /app/src /app/src
+COPY --from=py-build /app/migrations /app/migrations
+COPY --from=py-build /app/alembic.ini /app/alembic.ini
 COPY --from=web-build /web/dist ./static
 
 EXPOSE 8001
