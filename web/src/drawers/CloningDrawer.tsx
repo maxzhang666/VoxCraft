@@ -67,16 +67,15 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
     }
   }, [visible]);
 
-  // 切换 existing 时若 voiceId 还未选，挑第一个并跟随其 provider_name
+  // 切换 existing 时若 voiceId 还未选，挑第一个；不强制覆盖 Provider——
+  // voice 是跨 Provider 共享素材，用户自由选搭配的 cloning 模型
   const selectedVoice = useMemo(
     () => voices.find((v) => v.id === voiceId) ?? null,
     [voices, voiceId],
   );
   useEffect(() => {
     if (mode === "existing" && voices.length > 0 && !voiceId) {
-      const v = voices[0];
-      setVoiceId(v.id);
-      setProvider(v.provider_name);
+      setVoiceId(voices[0].id);
     }
   }, [mode, voices, voiceId]);
 
@@ -193,17 +192,12 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
           <Form.Slot label="选择已有音色">
             <Select
               value={voiceId}
-              onChange={(v) => {
-                const id = String(v);
-                setVoiceId(id);
-                const found = voices.find((x) => x.id === id);
-                if (found) setProvider(found.provider_name);
-              }}
+              onChange={(v) => setVoiceId(String(v))}
               style={{ width: "100%" }}
               optionList={voices.map((v) => ({
                 label:
                   v.source === "cloned"
-                    ? `🎵 ${v.id}（克隆 · ${v.provider_name}）`
+                    ? `🎵 ${v.id}（来源：${v.provider_name}）`
                     : `🔈 ${v.id}（预设 · ${v.provider_name}）`,
                 value: v.id,
               }))}
@@ -233,10 +227,13 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
           <Select
             value={provider}
             onChange={(v) => setProvider(String(v))}
-            placeholder="使用默认"
+            placeholder={
+              mode === "existing" && selectedVoice
+                ? `留空走音色来源 ${selectedVoice.provider_name}`
+                : "使用默认"
+            }
             showClear
             style={{ width: "100%" }}
-            disabled={mode === "existing"}
             optionList={providers.map((p) => ({
               label: p.is_default ? `${p.name}（默认）` : p.name,
               value: p.name,
@@ -244,7 +241,7 @@ export function CloningDrawer({ visible, onClose, onSuccess }: Props) {
           />
           {mode === "existing" && (
             <Text type="tertiary" size="small" style={{ marginTop: 4 }}>
-              使用已有音色时 Provider 自动锁定为该音色归属
+              音色是跨 Provider 共享的素材；可以选其他 cloning Provider 跑同一段参考
             </Text>
           )}
         </Form.Slot>

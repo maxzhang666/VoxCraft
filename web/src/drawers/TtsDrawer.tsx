@@ -68,12 +68,12 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
     return !!s?.capabilities?.includes("clone");
   }, [selectedProvider, classes]);
 
-  // 克隆型：列出该 Provider 下的 cloned voice
+  // 克隆型：列出**所有** cloned voice。zero-shot 模型（VoxCPM/IndexTTS）每次合成
+  // 把 reference WAV 当 prompt，模型本身无状态——voice 是跨 Provider 共享的素材，
+  // 不再按 v.provider_name 过滤。voice_refs.provider_name 退化为"创建归属"标签。
   const cloneVoices = useMemo(
-    () => voices.filter(
-      (v) => v.source === "cloned" && v.provider_name === providerName,
-    ),
-    [voices, providerName],
+    () => voices.filter((v) => v.source === "cloned"),
+    [voices],
   );
 
   // 切换到克隆 Provider 时自动挑第一个 voice；切换到非克隆自动设为 Provider 名
@@ -187,7 +187,9 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
                 onChange={(v) => setVoiceId(String(v))}
                 style={{ width: "100%" }}
                 optionList={cloneVoices.map((v) => ({
-                  label: v.id,
+                  label: v.provider_name
+                    ? `${v.id}（来源：${v.provider_name}）`
+                    : v.id,
                   value: v.id,
                 }))}
                 placeholder="选择已克隆的音色"
