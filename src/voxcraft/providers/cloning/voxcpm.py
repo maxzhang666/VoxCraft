@@ -89,8 +89,8 @@ class VoxCpmCloningProvider(CloningProvider):
             help="扩散去噪步数；增大→更精细，速度变慢",
         ),
         ConfigField(
-            "prompt_text", "默认 Prompt 文本", "str", default="",
-            help="若提供，开启 ultimate cloning（保真度更高）；建议填参考音频对应的文字",
+            "prompt_text", "Prompt 文本", "str", default="",
+            help="留空走基础克隆（VoxCPM 2 默认推荐）；填上参考音频对应的转写文字会升级到 ultimate cloning，保真度更高",
         ),
     ]
 
@@ -279,15 +279,24 @@ class VoxCpmCloningProvider(CloningProvider):
             inference_timesteps = 10
         prompt_text = str(self.config.get("prompt_text") or "").strip()
 
+        # VoxCPM 2.x 的 generate() 区分两条克隆路径（README 已确认）：
+        #   1. Ultimate Cloning（保真度最高）：prompt_wav_path + prompt_text + reference_wav_path
+        #      三者同传，且 prompt_wav_path 与 prompt_text 必须配对（v2 校验：
+        #      "prompt_wav_path and prompt_text must both be provided or both be None"）
+        #   2. 基础克隆（README 主推）：仅传 reference_wav_path，无需转写
+        # 旧实现总是单传 prompt_wav_path → 撞 v2 配对校验报错。
+        # 策略：默认走基础克隆；用户在 Provider config 配了 prompt_text 才升级到 Ultimate。
         gen_kwargs: dict = {
             "text": text,
-            "prompt_wav_path": reference_audio_path,
             "cfg_value": cfg_value,
             "inference_timesteps": inference_timesteps,
         }
-        # ultimate cloning：prompt_text 提供时一并传，提升保真度
         if prompt_text:
+            gen_kwargs["prompt_wav_path"] = reference_audio_path
             gen_kwargs["prompt_text"] = prompt_text
+            gen_kwargs["reference_wav_path"] = reference_audio_path
+        else:
+            gen_kwargs["reference_wav_path"] = reference_audio_path
 
         try:
             audio = self._model.generate(**gen_kwargs)  # type: ignore[union-attr]
