@@ -84,9 +84,21 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Registry cache：cache layer 存到 GHCR 独立 tag（buildcache），不受 GHA 10GB 限额约束
-          # mode=max 缓存所有中间层，torch 装包层（~5GB）跨 run 复用，增量 build <2min
-          # PR 不推送普通 image，也不写 cache，只 read（避免污染 cache tag）
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}:buildcache,mode=max', env.REGISTRY, env.IMAGE_NAME) || '' }}
+          # 双轨 cache：GHCR registry 给跨 PR/分支共享，GHA 给同分支内热路径
+          # - registry mode=max：缓存所有中间层（torch wheel 等 ~5GB），跨 run 复用
+          # - GHA cache：~10GB 限额内但命中速度快、稳定性高于 GHCR registry
+          # - PR 不推送 image 也不写 cache（避免污染共享 cache tag）
+          cache-from: |
+            type=gha,scope=docker
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: |
+            ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker,mode=max' || '' }}
+            ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}:buildcache,mode=max', env.REGISTRY, env.IMAGE_NAME) || '' }}
           provenance: false
+          # SOURCE_DATE_EPOCH=1：build 内部工具（uv/pip 等）尊重固定时间戳代替 build
+          # 时刻，消除 wheel install 写 metadata 时的 mtime 漂移。Dockerfile 内
+          # `find ... touch -h -d @0` 已显式归一 .venv / /opt/GPT-SoVITS，这里是
+          # 双重保险（覆盖工具自身写的 timestamp，find 兜底实际文件 mtime）。
+          # 用 1 而非 0：某些 BuildKit 版本把 0 当作"未设置"。
+          build-args: |
+            SOURCE_DATE_EPOCH=1

@@ -91,7 +91,6 @@ FROM python:3.11-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app/src:/opt/GPT-SoVITS:/opt/GPT-SoVITS/GPT_SoVITS \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
@@ -116,12 +115,16 @@ COPY --from=py-build /app/alembic.ini /app/alembic.ini
 COPY --from=py-build /opt/GPT-SoVITS /opt/GPT-SoVITS
 COPY --from=web-build /web/dist ./static
 
-# 故意放在 COPY 之后：调整 runtime ENV（如 TORCHDYNAMO_DISABLE）不应让 .venv 层
-# cache 失效。.venv 层一旦失效客户端要重下 ~3.2GB；ENV 改动放末尾让前置层
-# 字节级稳定。新加 ENV 一律在此处追加。
+# 故意放在 COPY 之后：调整 runtime ENV（PYTHONPATH / TORCHDYNAMO_DISABLE 等）
+# 不应让 .venv 层 cache 失效。.venv 层 ~3.2GB，一旦失效 client 强制重下；
+# 把 ENV 改动放到末尾让前置 COPY 层字节级稳定。新加 ENV 一律在此处追加。
+# - PYTHONPATH: /app/src 项目代码 + /opt/GPT-SoVITS 仓库根（默认 cwd）
+#   + /opt/GPT-SoVITS/GPT_SoVITS（GPT-SoVITS 用扁平 import：from AR.* /
+#   from module.* / from TTS_infer_pack.* import ...，需要这层在 sys.path）
 # - TORCHDYNAMO_DISABLE=1: voxcpm 内部 torch.compile 在 dynamo trace einops 0.8.2
 #   的 unbound builtin 调用时挂；进程级 kill switch 让 dynamo 全程不 trace
-ENV TORCHDYNAMO_DISABLE=1
+ENV PYTHONPATH=/app/src:/opt/GPT-SoVITS:/opt/GPT-SoVITS/GPT_SoVITS \
+    TORCHDYNAMO_DISABLE=1
 
 EXPOSE 8001
 
