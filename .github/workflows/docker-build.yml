@@ -1,10 +1,12 @@
 name: Build & Push Docker Image
 
-# 触发规则：
-# - push 到 master：构建并推送 latest / master / sha-<short>
-# - tag v*.*.*：构建并推送语义版本（v0.4.0 / 0.4 / latest）
-# - PR：仅构建验证，不推送
-# paths-ignore 过滤纯文档/编辑器/元数据变更，避免无关改动触发重建
+# 两层镜像：
+# - voxcraft-base：含 .venv + GPT-SoVITS（~3.5GB），仅 deps 改动时重建
+# - voxcraft：FROM voxcraft-base + src + 前端（~50MB 增量），src 改动时重建
+#
+# detect job 用 paths-filter 决定 base 是否要重建；build-app 永远跑，按
+# build-base 状态选基底（重建则用 :sha，跳过则用 :latest）。
+
 on:
   push:
     branches: [master]
@@ -27,24 +29,94 @@ on:
       - ".vscode/**"
       - ".gitignore"
       - ".dockerignore"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_base:
+        description: "强制重建 base 镜像（即使依赖未变）"
+        required: false
+        default: "false"
 
 env:
   REGISTRY: ghcr.io
-  # GHCR / Docker 要求 image reference 全小写；github.repository 可能含大写（如 maxzhang666/VoxCraft）
-  # 在 job step 动态转成小写写入 env.IMAGE_NAME，后续所有 step 复用
 
 concurrency:
   group: docker-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-push:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      base_changed: ${{ steps.filter.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            base:
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'Dockerfile.base'
+              - '.github/workflows/docker-build.yml'
+
+  build-base:
+    needs: detect
+    if: |
+      needs.detect.outputs.base_changed == 'true'
+      || github.event.inputs.force_base == 'true'
+      || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Normalize image name to lowercase
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          platforms: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-base:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-base:${{ github.sha }}
+          cache-from: type=gha,scope=docker-base
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker-base,mode=max' || '' }}
+          provenance: false
+          build-args: |
+            SOURCE_DATE_EPOCH=1
+          # rewrite-timestamp=true 让 BuildKit 把所有 layer entry mtime 重写为
+          # SOURCE_DATE_EPOCH，base layer blob 跨构建字节稳定，client cache 命中
+          outputs: |
+            type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
+
+  build-app:
+    needs: [detect, build-base]
+    # build-base 跳过（deps 未变）或成功（deps 变了）都要继续；只有 base 失败才中断
+    if: |
+      always()
+      && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,30 +148,30 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
 
-      - name: Build and push
+      - name: Resolve base image tag
+        id: base
+        run: |
+          if [ "${{ needs.build-base.result }}" = "success" ]; then
+            # 这次 push 重建了 base：用 sha tag 确保 app 跟它一一对应
+            echo "tag=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-base:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            # base 未重建：复用最新已发布 base
+            echo "tag=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-base:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push app
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=docker
-          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker,mode=max' || '' }}
+          cache-from: type=gha,scope=docker-app
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker-app,mode=max' || '' }}
           provenance: false
-          # 三层 reproducible builds 措施（缺一不可，之前只做了 1+2 没做 3，
-          # 导致 layer blob digest 跨 build 持续漂移，client 每次重下 3+GB）：
-          #
-          # 1. SOURCE_DATE_EPOCH=1（build-arg）：build 内部工具（uv/pip）尊重
-          #    固定时间戳代替 build wallclock，消除 wheel install metadata 漂移
-          # 2. Dockerfile `find ... touch -h -d @0`：把 .venv / /opt/GPT-SoVITS
-          #    实际文件 mtime 归一到 epoch
-          # 3. **rewrite-timestamp=true（outputs）**：BuildKit 在打包 layer tar
-          #    时把所有文件 mtime 重写为 SOURCE_DATE_EPOCH。这一步关键——
-          #    没有它，BuildKit 用 build 时刻打 tar，即便文件 mtime 已统一也
-          #    白搭。这是 BuildKit ≥0.13 的标准 knob。
-          #
-          # outputs 替代 `push:` 字段；rewrite-timestamp 必须通过 outputs 触发
           build-args: |
             SOURCE_DATE_EPOCH=1
+            BASE_IMAGE=${{ steps.base.outputs.tag }}
           outputs: |
             type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
