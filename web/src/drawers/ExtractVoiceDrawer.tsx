@@ -1,4 +1,12 @@
-import { Form, Input, Select, Toast, Typography, Upload } from "@douyinfe/semi-ui";
+import {
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Toast,
+  Typography,
+  Upload,
+} from "@douyinfe/semi-ui";
 import { IconUpload } from "@douyinfe/semi-icons";
 import { useEffect, useState } from "react";
 
@@ -26,6 +34,10 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [speakerName, setSpeakerName] = useState("");
   const [provider, setProvider] = useState<string>("");
+  // 默认 start=0 / duration=8s（落在 GPT-SoVITS 3-10s 与 VoxCPM 默认推荐区间内）；
+  // 用户可改成 null 走"整段"模式（duration 字段留空即可）
+  const [startSeconds, setStartSeconds] = useState<number | null>(0);
+  const [durationSeconds, setDurationSeconds] = useState<number | null>(8);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -38,6 +50,8 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
       setFile(null);
       setSpeakerName("");
       setProvider("");
+      setStartSeconds(0);
+      setDurationSeconds(8);
     }
   }, [visible]);
 
@@ -52,6 +66,8 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
         reference: file,
         speaker_name: speakerName.trim() || undefined,
         provider: provider || undefined,
+        start_seconds: startSeconds ?? undefined,
+        duration_seconds: durationSeconds ?? undefined,
       });
       Toast.success(`已添加音色 ${r.voice_id}`);
       onSuccess();
@@ -122,6 +138,39 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
               </div>
             </div>
           </Upload>
+        </Form.Slot>
+
+        <Form.Slot label="切取范围（秒）— 建议 3-10s 内，匹配 VoxCPM / GPT-SoVITS 推理约束">
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <InputNumber
+              value={startSeconds ?? undefined}
+              onChange={(v) =>
+                setStartSeconds(typeof v === "number" ? v : null)
+              }
+              min={0}
+              step={0.5}
+              precision={1}
+              suffix="起点 s"
+              placeholder="0"
+              style={{ width: 130 }}
+            />
+            <Text type="tertiary" size="small">→</Text>
+            <InputNumber
+              value={durationSeconds ?? undefined}
+              onChange={(v) =>
+                setDurationSeconds(typeof v === "number" ? v : null)
+              }
+              min={0}
+              step={0.5}
+              precision={1}
+              suffix="时长 s"
+              placeholder="整段"
+              style={{ width: 130 }}
+            />
+            <Text type="tertiary" size="small">
+              留空则保留整段；时长 0/空 = 不裁剪
+            </Text>
+          </div>
         </Form.Slot>
 
         <Form.Slot label="音色名称（可选，便于识别）">

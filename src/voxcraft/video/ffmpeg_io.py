@@ -104,9 +104,14 @@ def extract_audio(
     *,
     sample_rate: int = 16000,
     mono: bool = True,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
 ) -> None:
     """把输入媒体的音轨解码为 PCM WAV（默认 16kHz mono，ASR 友好）。
 
+    可选 start_seconds/duration_seconds 把输出裁剪为 [start, start+duration) 区间——
+    抽取声纹时用得上（避免上传整段长视频后又得人工裁剪到 3-10s）。
+    `-ss` 放在 `-i` 之后走精确 seek（解码到精确帧），短片段裁剪精度优先于速度。
     覆盖同名文件；父目录需已存在。
     """
     _require_ffmpeg()
@@ -114,17 +119,29 @@ def extract_audio(
     dst = Path(out_wav_path)
     if not src.exists():
         raise MediaDecodeError(f"source not found: {src}")
+    if start_seconds is not None and start_seconds < 0:
+        raise MediaDecodeError(f"start_seconds must be >= 0, got {start_seconds}")
+    if duration_seconds is not None and duration_seconds <= 0:
+        raise MediaDecodeError(f"duration_seconds must be > 0, got {duration_seconds}")
 
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", str(src),
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src)]
+    if start_seconds is not None:
+        cmd += ["-ss", f"{start_seconds:.3f}"]
+    if duration_seconds is not None:
+        cmd += ["-t", f"{duration_seconds:.3f}"]
+    cmd += [
         "-vn",                              # 丢弃视频流
         "-ar", str(sample_rate),
         "-ac", "1" if mono else "2",
         "-f", "wav",
         str(dst),
     ]
-    _run_ffmpeg(cmd, context={"op": "extract_audio", "src": str(src)})
+    _run_ffmpeg(cmd, context={
+        "op": "extract_audio",
+        "src": str(src),
+        "start_seconds": start_seconds,
+        "duration_seconds": duration_seconds,
+    })
 
 
 def mux_video(

@@ -49,6 +49,15 @@ async def extract_voice(
         None,
         description="cloning Provider 名；不传走 cloning kind 默认 Provider",
     ),
+    start_seconds: float | None = Form(
+        None, ge=0,
+        description="可选：从原始音频的第几秒开始截取声纹片段（默认从 0 开始）",
+    ),
+    duration_seconds: float | None = Form(
+        None, gt=0,
+        description="可选：截取片段时长（秒）。建议 3-10 秒以匹配 VoxCPM/GPT-SoVITS 推理约束；"
+        "不传则保留整段音轨",
+    ),
     session: Session = Depends(get_session),
 ) -> VoiceExtractResponse:
     ext = _ext_of(reference.filename)
@@ -81,7 +90,13 @@ async def extract_voice(
     ref_final = voices_dir / f"{voice_id}.wav"
     duration: float | None = None
     try:
-        await asyncio.to_thread(extract_audio, tmp_path, ref_final)
+        await asyncio.to_thread(
+            extract_audio,
+            tmp_path,
+            ref_final,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+        )
         try:
             info = await asyncio.to_thread(probe, ref_final)
             duration = info.duration

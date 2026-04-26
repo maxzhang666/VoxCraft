@@ -13,6 +13,10 @@ export interface ExtractVoiceParams {
   reference: File;
   speaker_name?: string;
   provider?: string;
+  /** 可选：从原始媒体的第几秒开始切取声纹片段 */
+  start_seconds?: number;
+  /** 可选：声纹片段时长（秒）。建议 3-10s 匹配 VoxCPM / GPT-SoVITS 推理约束 */
+  duration_seconds?: number;
 }
 
 export const listVoices = () =>
@@ -23,6 +27,12 @@ export const extractVoice = (params: ExtractVoiceParams) => {
   fd.append("reference", params.reference);
   if (params.speaker_name) fd.append("speaker_name", params.speaker_name);
   if (params.provider) fd.append("provider", params.provider);
+  if (params.start_seconds !== undefined) {
+    fd.append("start_seconds", String(params.start_seconds));
+  }
+  if (params.duration_seconds !== undefined) {
+    fd.append("duration_seconds", String(params.duration_seconds));
+  }
   return api
     .post<VoiceExtractResponse>("/tts/voices/extract", fd)
     .then((r) => r.data);
