@@ -141,6 +141,22 @@ CATALOG: list[CatalogEntry] = [
         provider_class="VoxCpmCloningProvider",
         mirror_authority="official",
     ),
+    # GPT-SoVITS：MIT 商业友好 + 跨语种克隆 + Pascal sm_61 兼容（torch 2.6 wheel 自带）
+    # 主仓库 ~5.3GB（chinese-roberta-wwm-ext-large 1.3GB + chinese-hubert-base 360MB
+    # + s1v3.ckpt + v2Pro/* + g2p 词典）。8GB P104 可跑 v2Pro。
+    CatalogEntry(
+        key="gpt-sovits-v2pro",
+        label="GPT-SoVITS v2Pro (MIT)",
+        kind="cloning",
+        sources={
+            "hf": "lj1995/GPT-SoVITS",
+            "ms": "lj1995/GPT-SoVITS",
+        },
+        size_mb=5500,
+        recommend_tier="high",
+        provider_class="GptSoVitsProvider",
+        mirror_authority="official",
+    ),
     CatalogEntry(
         key="indextts-1.5",
         label="IndexTTS 1.5 (非商业)",

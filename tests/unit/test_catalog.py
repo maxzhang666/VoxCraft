@@ -12,8 +12,8 @@ from voxcraft.models_lib.catalog import (
 )
 
 
-def test_catalog_has_eleven_entries():
-    assert len(CATALOG) == 11
+def test_catalog_has_twelve_entries():
+    assert len(CATALOG) == 12
 
 
 def test_catalog_keys_unique():
@@ -58,12 +58,13 @@ def test_catalog_entry_is_frozen():
         e.key = "mutated"  # type: ignore[misc]
 
 
-def test_catalog_cloning_entries_include_voxcpm_indextts():
+def test_catalog_cloning_entries_include_known_providers():
     cloning_keys = {e.key for e in CATALOG if e.kind == "cloning"}
     assert "voxcpm-0.5b" in cloning_keys
     assert "voxcpm-2" in cloning_keys
     assert "indextts-1.5" in cloning_keys
     assert "indextts-2" in cloning_keys
+    assert "gpt-sovits-v2pro" in cloning_keys
 
 
 def test_ms_sources_for_cn_users():

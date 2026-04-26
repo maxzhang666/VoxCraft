@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from voxcraft.providers import capabilities
 from voxcraft.providers.asr.whisper import WhisperProvider
+from voxcraft.providers.cloning.gpt_sovits import GptSoVitsProvider
 from voxcraft.providers.cloning.indextts import IndexTtsProvider
 from voxcraft.providers.cloning.voxcpm import VoxCpmCloningProvider
 from voxcraft.providers.separator.demucs import DemucsProvider
@@ -16,6 +17,7 @@ def test_capability_constants():
 def test_cloning_providers_declare_clone():
     assert capabilities.CLONE in VoxCpmCloningProvider.CAPABILITIES
     assert capabilities.CLONE in IndexTtsProvider.CAPABILITIES
+    assert capabilities.CLONE in GptSoVitsProvider.CAPABILITIES
 
 
 def test_non_cloning_providers_empty():
@@ -34,6 +36,9 @@ def test_classes_endpoint_exposes_capabilities(client):
 
     assert "IndexTtsProvider" in by_name
     assert "clone" in by_name["IndexTtsProvider"]["capabilities"]
+
+    assert "GptSoVitsProvider" in by_name
+    assert "clone" in by_name["GptSoVitsProvider"]["capabilities"]
 
     # 非克隆 Provider 的 capabilities 字段存在且为空 list
     assert by_name["PiperProvider"]["capabilities"] == []

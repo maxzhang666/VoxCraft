@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from voxcraft.errors import ModelLoadError
+from voxcraft.providers.cloning.gpt_sovits import GptSoVitsProvider
 from voxcraft.providers.cloning.indextts import IndexTtsProvider
 from voxcraft.providers.cloning.voxcpm import VoxCpmCloningProvider
 from voxcraft.providers.separator.demucs import DemucsProvider
@@ -18,6 +19,7 @@ from voxcraft.providers.separator.demucs import DemucsProvider
     [
         (VoxCpmCloningProvider, {"model_dir": "/x"}),
         (IndexTtsProvider, {"model_dir": "/x"}),
+        (GptSoVitsProvider, {"model_dir": "/x"}),
         (DemucsProvider, {"model_name": "htdemucs"}),
     ],
 )
@@ -33,6 +35,7 @@ def test_stub_construction_no_side_effect(cls, config):
     [
         (VoxCpmCloningProvider, {"model_dir": "/x"}),
         (IndexTtsProvider, {"model_dir": "/x"}),
+        (GptSoVitsProvider, {"model_dir": "/x"}),
         (DemucsProvider, {"model_name": "htdemucs"}),
     ],
 )
@@ -41,4 +44,11 @@ def test_stub_load_raises_model_load_error_without_deps(cls, config):
     with pytest.raises(ModelLoadError) as exc:
         p.load()
     assert exc.value.code == "MODEL_LOAD_ERROR"
-    assert "not installed" in exc.value.message.lower() or "failed" in exc.value.message.lower()
+    msg = exc.value.message.lower()
+    # 兼容多种合理失败：依赖未装 / 路径无效 / 缺文件
+    assert (
+        "not installed" in msg
+        or "not found" in msg
+        or "failed" in msg
+        or "missing" in msg
+    )
