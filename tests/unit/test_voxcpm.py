@@ -11,17 +11,25 @@ from voxcraft.errors import InferenceError, ModelLoadError
 from voxcraft.providers.cloning.voxcpm import VoxCpmCloningProvider
 
 
-@pytest.fixture
-def mock_voxcpm(monkeypatch):
-    """注入一个 mock 的 voxcpm 模块；测试结束 monkeypatch 自动恢复。"""
+def _install_fake_voxcpm(monkeypatch, *, is_v2: bool) -> dict:
+    """注入 mock voxcpm 模块。is_v2=True 时把内部 tts_model 类名设为 VoxCPM2Model
+    并让 voxcpm.model.voxcpm2.VoxCPM2Model 可被 import；以匹配 provider 的 dispatch 检测。"""
     captured: dict = {}
 
-    class _FakeTtsModel:
-        sample_rate = 24000
+    if is_v2:
+        class VoxCPM2Model:  # noqa: N801 — 名字必须是 VoxCPM2Model 才能匹配 dispatch
+            sample_rate = 24000
+
+        tts_cls = VoxCPM2Model
+    else:
+        class _FakeTtsModel:
+            sample_rate = 24000
+
+        tts_cls = _FakeTtsModel
 
     class _FakeVoxCPM:
         def __init__(self):
-            self.tts_model = _FakeTtsModel()
+            self.tts_model = tts_cls()
 
         @classmethod
         def from_pretrained(cls, model_path, load_denoiser=False):
@@ -34,13 +42,33 @@ def mock_voxcpm(monkeypatch):
 
         def generate(self, **kwargs):
             captured["generate_kwargs"] = kwargs
-            # 0.1 秒 24kHz 静音
             return np.zeros(2400, dtype=np.float32)
 
     fake_module = ModuleType("voxcpm")
     fake_module.VoxCPM = _FakeVoxCPM
     monkeypatch.setitem(sys.modules, "voxcpm", fake_module)
+
+    if is_v2:
+        # 让 `from voxcpm.model.voxcpm2 import VoxCPM2Model` 能解析到上面定义的类
+        fake_model = ModuleType("voxcpm.model")
+        fake_v2 = ModuleType("voxcpm.model.voxcpm2")
+        fake_v2.VoxCPM2Model = tts_cls
+        monkeypatch.setitem(sys.modules, "voxcpm.model", fake_model)
+        monkeypatch.setitem(sys.modules, "voxcpm.model.voxcpm2", fake_v2)
+
     return captured
+
+
+@pytest.fixture
+def mock_voxcpm(monkeypatch):
+    """默认 v1 mock（如 VoxCPM-0.5B）。测试结束 monkeypatch 自动恢复。"""
+    return _install_fake_voxcpm(monkeypatch, is_v2=False)
+
+
+@pytest.fixture
+def mock_voxcpm_v2(monkeypatch):
+    """v2 mock（如 VoxCPM2 / openbmb/VoxCPM2）。"""
+    return _install_fake_voxcpm(monkeypatch, is_v2=True)
 
 
 def test_load_passes_config_to_from_pretrained(mock_voxcpm):
@@ -102,11 +130,39 @@ def test_synthesize_passes_kwargs_and_returns_wav(mock_voxcpm):
     assert kw["prompt_text"] == "你好世界"
 
 
-def test_synthesize_skips_prompt_text_when_empty(mock_voxcpm):
+def test_synthesize_v1_without_prompt_text_raises(mock_voxcpm):
+    """VoxCPM 1.x（0.5B）的克隆路径要求 prompt_wav_path + prompt_text 同传；
+    缺转写文字时 voxcpm 自身会抛配对错误，provider 在调用前就显式拦截给清晰提示。"""
+    p = VoxCpmCloningProvider(name="vox", config={"model_dir": "/x"})
+    p.load()
+    with pytest.raises(InferenceError) as exc:
+        p.synthesize("hi", voice_id="vx_x", reference_audio_path="/r.wav")
+    assert "transcript" in exc.value.message.lower()
+
+
+def test_synthesize_v2_basic_clone_uses_reference_wav_path(mock_voxcpm_v2):
+    """v2 + 无 prompt_text → 走 reference_wav_path 基础克隆。"""
     p = VoxCpmCloningProvider(name="vox", config={"model_dir": "/x"})
     p.load()
     p.synthesize("hi", voice_id="vx_x", reference_audio_path="/r.wav")
-    assert "prompt_text" not in mock_voxcpm["generate_kwargs"]
+    kw = mock_voxcpm_v2["generate_kwargs"]
+    assert kw["reference_wav_path"] == "/r.wav"
+    assert "prompt_wav_path" not in kw
+    assert "prompt_text" not in kw
+
+
+def test_synthesize_v2_with_prompt_text_does_ultimate_cloning(mock_voxcpm_v2):
+    """v2 + prompt_text → 三参数同传走 ultimate cloning。"""
+    p = VoxCpmCloningProvider(
+        name="vox",
+        config={"model_dir": "/x", "prompt_text": "参考音频里讲的话"},
+    )
+    p.load()
+    p.synthesize("hi", voice_id="vx_x", reference_audio_path="/r.wav")
+    kw = mock_voxcpm_v2["generate_kwargs"]
+    assert kw["prompt_wav_path"] == "/r.wav"
+    assert kw["prompt_text"] == "参考音频里讲的话"
+    assert kw["reference_wav_path"] == "/r.wav"
 
 
 def test_synthesize_unsupported_format_raises(mock_voxcpm):

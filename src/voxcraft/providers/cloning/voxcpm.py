@@ -90,7 +90,7 @@ class VoxCpmCloningProvider(CloningProvider):
         ),
         ConfigField(
             "prompt_text", "Prompt 文本", "str", default="",
-            help="留空走基础克隆（VoxCPM 2 默认推荐）；填上参考音频对应的转写文字会升级到 ultimate cloning，保真度更高",
+            help="参考音频对应的转写文字。VoxCPM 1.x（0.5B）必填；VoxCPM2 可留空走基础克隆，填上则升级到 ultimate cloning 保真度更高",
         ),
     ]
 
@@ -279,24 +279,46 @@ class VoxCpmCloningProvider(CloningProvider):
             inference_timesteps = 10
         prompt_text = str(self.config.get("prompt_text") or "").strip()
 
-        # VoxCPM 2.x 的 generate() 区分两条克隆路径（README 已确认）：
-        #   1. Ultimate Cloning（保真度最高）：prompt_wav_path + prompt_text + reference_wav_path
-        #      三者同传，且 prompt_wav_path 与 prompt_text 必须配对（v2 校验：
-        #      "prompt_wav_path and prompt_text must both be provided or both be None"）
-        #   2. 基础克隆（README 主推）：仅传 reference_wav_path，无需转写
-        # 旧实现总是单传 prompt_wav_path → 撞 v2 配对校验报错。
-        # 策略：默认走基础克隆；用户在 Provider config 配了 prompt_text 才升级到 Ultimate。
+        # voxcpm 包是 facade：VoxCPM.from_pretrained 根据 config.json 的 architecture
+        # 字段加载 VoxCPMModel (v1, 如 VoxCPM-0.5B) 或 VoxCPM2Model (v2)。
+        # generate() 是统一入口，但 validation 规则按内部模型分支：
+        #   - prompt_wav_path / prompt_text：v1 v2 都强制配对，少一个就抛
+        #   - reference_wav_path：仅 v2 支持，v1 传会抛 "only supported with VoxCPM2"
+        # v1 (0.5B) 的唯一克隆路径是 prompt_wav_path + prompt_text 同传——必须有转写文字。
+        # v2 还可以走"基础克隆"（仅 reference_wav_path，无需转写）。
+        try:
+            from voxcpm.model.voxcpm2 import VoxCPM2Model  # type: ignore[import-not-found]
+            is_v2 = isinstance(getattr(self._model, "tts_model", None), VoxCPM2Model)
+        except (ImportError, AttributeError):
+            inner = getattr(self._model, "tts_model", self._model)
+            is_v2 = type(inner).__name__ == "VoxCPM2Model"
+
         gen_kwargs: dict = {
             "text": text,
             "cfg_value": cfg_value,
             "inference_timesteps": inference_timesteps,
         }
-        if prompt_text:
+        if is_v2:
+            if prompt_text:
+                # Ultimate Cloning：三参数同传（最高保真度）
+                gen_kwargs["prompt_wav_path"] = reference_audio_path
+                gen_kwargs["prompt_text"] = prompt_text
+                gen_kwargs["reference_wav_path"] = reference_audio_path
+            else:
+                # 基础克隆（v2 主推，无需转写）
+                gen_kwargs["reference_wav_path"] = reference_audio_path
+        else:
+            # v1.x：必须 prompt_wav_path + prompt_text 同传，否则 voxcpm 直接抛错
+            if not prompt_text:
+                raise InferenceError(
+                    "VoxCPM 1.x (e.g. VoxCPM-0.5B) requires both reference audio AND its "
+                    "transcript. Set `prompt_text` in this Provider's config (the words "
+                    "that are spoken in the reference audio), or switch to VoxCPM2 which "
+                    "supports zero-shot cloning without transcript.",
+                    details={"provider": self.name, "model_arch": "voxcpm-v1"},
+                )
             gen_kwargs["prompt_wav_path"] = reference_audio_path
             gen_kwargs["prompt_text"] = prompt_text
-            gen_kwargs["reference_wav_path"] = reference_audio_path
-        else:
-            gen_kwargs["reference_wav_path"] = reference_audio_path
 
         try:
             audio = self._model.generate(**gen_kwargs)  # type: ignore[union-attr]
