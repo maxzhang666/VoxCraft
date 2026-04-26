@@ -65,11 +65,7 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app/src \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    # VoxCPM 内部 torch.compile 在 dynamo trace einops 0.8.2 的 unbound builtin
-    # 调用时挂；进程级 kill switch 让 dynamo 全程不 trace，Pascal 卡 compile
-    # 收益有限，eager 可接受。Provider 层另有 monkey-patch 双保险
-    TORCHDYNAMO_DISABLE=1
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -88,6 +84,13 @@ COPY --from=py-build /app/src /app/src
 COPY --from=py-build /app/migrations /app/migrations
 COPY --from=py-build /app/alembic.ini /app/alembic.ini
 COPY --from=web-build /web/dist ./static
+
+# 故意放在 COPY 之后：调整 runtime ENV（如 TORCHDYNAMO_DISABLE）不应让 .venv 层
+# cache 失效。.venv 层一旦失效客户端要重下 ~3.2GB；ENV 改动放末尾让前置层
+# 字节级稳定。新加 ENV 一律在此处追加。
+# - TORCHDYNAMO_DISABLE=1: voxcpm 内部 torch.compile 在 dynamo trace einops 0.8.2
+#   的 unbound builtin 调用时挂；进程级 kill switch 让 dynamo 全程不 trace
+ENV TORCHDYNAMO_DISABLE=1
 
 EXPOSE 8001
 
