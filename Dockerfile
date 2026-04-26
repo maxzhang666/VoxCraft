@@ -4,6 +4,11 @@
 # 大头镜像只在 pyproject/uv.lock/Dockerfile.base 改动时由 docker-build-base 流水线
 # 重建——日常 src commit 客户端只拉这层 ~50MB 增量。
 
+# Global ARG：必须放在所有 FROM 之前才能被后续 `FROM ${BASE_IMAGE}` 引用，
+# 中间位置（两个 FROM 之间）的 ARG 既不是 global 也不在 stage 内，
+# default 与 --build-arg 都不会被应用，导致 "base name should not be blank"。
+ARG BASE_IMAGE=ghcr.io/maxzhang666/voxcraft-base:latest
+
 # -------- Stage 1: Web build --------
 FROM node:22-alpine AS web-build
 
@@ -17,7 +22,6 @@ COPY web/ ./
 RUN pnpm build
 
 # -------- Stage 2: Compose on top of base --------
-ARG BASE_IMAGE=ghcr.io/maxzhang666/voxcraft-base:latest
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
