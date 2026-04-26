@@ -2,7 +2,10 @@
 name = "voxcraft"
 version = "0.1.0"
 description = "自托管多模态音频推理服务 (ASR / TTS / 克隆 / 人声分离)"
-requires-python = ">=3.13"
+# OpenVoice v2 集成需要：MeloTTS 上游 numpy<2 / 自身 transitive deps（pyopenjtalk/jamo 等）
+# 在 cp313 上无 wheel；OpenVoice 也只测到 3.11。降 Python 到 3.11 是 OpenVoice
+# 集成的硬前提。voxcpm/torch 2.6/whisper 在 3.11 上同样 OK
+requires-python = ">=3.11,<3.12"
 readme = "README.md"
 license = { text = "MIT" }
 

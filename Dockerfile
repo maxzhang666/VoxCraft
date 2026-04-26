@@ -23,7 +23,7 @@ COPY web/ ./
 RUN pnpm build
 
 # -------- Stage 2: Python build --------
-FROM python:3.13-slim-bookworm AS py-build
+FROM python:3.11-slim-bookworm AS py-build
 
 # UV_COMPILE_BYTECODE=0：不让 uv 预编译 .pyc。原因：.pyc 头部嵌入 source mtime，
 # 而 source 的 mtime 来自 docker COPY 时的 host 时间——每次构建都不同，
@@ -33,7 +33,7 @@ FROM python:3.13-slim-bookworm AS py-build
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=0
 
-# voxcpm 引入的部分 transitive deps（umap-learn / wetext 等）在 linux+py3.13 上
+# voxcpm 引入的部分 transitive deps（umap-learn / wetext 等）在 linux+py3.11 上
 # 可能没有预编 wheel，需要 sdist 源码编译；slim base 默认无 gcc 会让 uv sync 退出 1。
 # 装 build-essential + python3-dev 覆盖 source-build 需要；仅 py-build 中间层，
 # 不影响 runtime image 大小。
@@ -59,7 +59,7 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 
 # -------- Stage 3: Runtime --------
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.11-slim-bookworm AS runtime
 
 # NVIDIA 驱动能力声明：
 # - VISIBLE_DEVICES=all：接受 nvidia-container-toolkit 下发的全部 GPU
@@ -83,7 +83,7 @@ WORKDIR /app
 # - .venv 层 ~3.2GB：仅当 pyproject/uv.lock 变化时失效，日常代码提交 client pull 命中缓存
 # - src / migrations / alembic.ini 层：每次代码改动重做，但只有 ~10MB
 # - static 层独立：前端改动也不波及 Python 层
-# py-build 与 runtime 共用 python:3.13-slim-bookworm，venv shebang 的 /usr/local/bin/python3.13 在两阶段一致
+# py-build 与 runtime 共用 python:3.11-slim-bookworm，venv shebang 的 /usr/local/bin/python3.11 在两阶段一致
 COPY --from=py-build /app/.venv /app/.venv
 COPY --from=py-build /app/src /app/src
 COPY --from=py-build /app/migrations /app/migrations
