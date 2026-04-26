@@ -81,22 +81,25 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # 单轨 GHA cache（mode=max，缓存所有中间层）。
-          # 之前用 GHCR registry+GHA 双轨写入：mode=max 各写 5GB+ 累计 5-10 min 开销，
-          # 且 GHCR registry 历史上多次出现 manifest mismatch 导致 cache miss 全链
-          # cascade 重建（13/18/54min 构建都跟它有关）。GHA cache 更快更稳，10GB 配额
-          # 对 ~5GB layer cache 足够，自动 LRU evict。删掉 GHCR cache 既省写入时间
-          # 又减少不可靠 cache miss 路径。
           cache-from: type=gha,scope=docker
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker,mode=max' || '' }}
           provenance: false
-          # SOURCE_DATE_EPOCH=1：build 内部工具（uv/pip 等）尊重固定时间戳代替 build
-          # 时刻，消除 wheel install 写 metadata 时的 mtime 漂移。Dockerfile 内
-          # `find ... touch -h -d @0` 已显式归一 .venv / /opt/GPT-SoVITS，这里是
-          # 双重保险（覆盖工具自身写的 timestamp，find 兜底实际文件 mtime）。
-          # 用 1 而非 0：某些 BuildKit 版本把 0 当作"未设置"。
+          # 三层 reproducible builds 措施（缺一不可，之前只做了 1+2 没做 3，
+          # 导致 layer blob digest 跨 build 持续漂移，client 每次重下 3+GB）：
+          #
+          # 1. SOURCE_DATE_EPOCH=1（build-arg）：build 内部工具（uv/pip）尊重
+          #    固定时间戳代替 build wallclock，消除 wheel install metadata 漂移
+          # 2. Dockerfile `find ... touch -h -d @0`：把 .venv / /opt/GPT-SoVITS
+          #    实际文件 mtime 归一到 epoch
+          # 3. **rewrite-timestamp=true（outputs）**：BuildKit 在打包 layer tar
+          #    时把所有文件 mtime 重写为 SOURCE_DATE_EPOCH。这一步关键——
+          #    没有它，BuildKit 用 build 时刻打 tar，即便文件 mtime 已统一也
+          #    白搭。这是 BuildKit ≥0.13 的标准 knob。
+          #
+          # outputs 替代 `push:` 字段；rewrite-timestamp 必须通过 outputs 触发
           build-args: |
             SOURCE_DATE_EPOCH=1
+          outputs: |
+            type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
