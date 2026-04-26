@@ -54,7 +54,15 @@ WORKDIR /app
 # 客户端 docker pull 命中缓存层，不重下 ~3.2GB。
 # 项目代码靠 runtime 阶段的 PYTHONPATH=/app/src 加载，无需写入 site-packages。
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project \
+# BuildKit cache mount：把 uv 的 wheel/sdist 下载缓存放进独立 cache mount。
+# 即便 RUN layer cache miss（pyproject/uv.lock 改了 → 必须重跑 uv sync），
+# 这个 cache mount 仍跨 build 持久化——wheel 已经在 /root/.cache/uv 里，
+# uv 不再从 PyPI 重新下载 4.2GB（torch + nvidia-* libs 等大头），
+# 只做本地 install + link，节省 5-10 分钟下载时间。
+# id=uv-cache 让多次 build 复用同一 cache；cache-to=type=gha,mode=max 会
+# 自动 export 到 GHA cache 持久化。
+RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache \
+    uv sync --frozen --no-dev --no-install-project \
  && find /app/.venv \( -type f -o -type d \) -exec touch -h -d @0 {} +
 # Reproducible .venv：uv sync 在 wheel install 时写入 *.dist-info/INSTALLER 等
 # 文件，其 mtime 是 build 时刻；当 BuildKit registry cache miss 重跑 uv sync 时
