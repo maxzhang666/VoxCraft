@@ -54,7 +54,14 @@ WORKDIR /app
 # 客户端 docker pull 命中缓存层，不重下 ~3.2GB。
 # 项目代码靠 runtime 阶段的 PYTHONPATH=/app/src 加载，无需写入 site-packages。
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project \
+ && find /app/.venv \( -type f -o -type d \) -exec touch -h -d @0 {} +
+# Reproducible .venv：uv sync 在 wheel install 时写入 *.dist-info/INSTALLER 等
+# 文件，其 mtime 是 build 时刻；当 BuildKit registry cache miss 重跑 uv sync 时
+# 即便输入字节相同，新 .venv 的 tar 序列化结果也会因 mtime 不同而 hash 不一样，
+# 让 client 重下整个 ~3.2GB 层。touch 到 epoch 0 让 mtime 稳定，COPY 出来的
+# layer blob 字节级 reproducible —— pyproject/uv.lock 不变 ⇒ blob hash 不变。
+# Python runtime 不依赖源文件 mtime，新生成的 __pycache__ 也按当前 mtime 写。
 
 # GPT-SoVITS：仓库无 PyPI 包，但它 import GPT_SoVITS.* 是裸目录形式
 # （非 setup.py install），所以 git clone 到 /opt + runtime PYTHONPATH 注入即可。
@@ -65,7 +72,9 @@ RUN git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS.git /opt/GPT-SoVI
  && cd /opt/GPT-SoVITS \
  && git fetch --depth 1 origin "$GPT_SOVITS_COMMIT" \
  && git checkout "$GPT_SOVITS_COMMIT" \
- && rm -rf .git
+ && rm -rf .git \
+ && find /opt/GPT-SoVITS \( -type f -o -type d \) -exec touch -h -d @0 {} +
+# 同样把 GPT-SoVITS 仓库 mtime 标准化，让该层 blob 跨构建稳定
 
 # 源码 + 配置仅复制不安装
 COPY src ./src
