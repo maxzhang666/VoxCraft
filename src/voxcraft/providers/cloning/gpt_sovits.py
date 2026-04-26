@@ -387,6 +387,24 @@ class GptSoVitsProvider(CloningProvider):
                 details={"provider": self.name},
             )
 
+        # GPT-SoVITS 内部限制参考音频时长 3-10 秒；提前预检避免推理深栈才报错
+        try:
+            import soundfile as sf  # noqa: PLC0415
+            info = sf.info(reference_audio_path)
+            ref_duration = info.frames / info.samplerate if info.samplerate else 0.0
+        except Exception:
+            ref_duration = None
+        if ref_duration is not None and not (3.0 <= ref_duration <= 10.0):
+            raise InferenceError(
+                f"Reference audio duration {ref_duration:.2f}s is outside GPT-SoVITS's "
+                "required 3-10s range. Trim the reference audio to a 3-10 second clip and retry.",
+                details={
+                    "provider": self.name,
+                    "reference": reference_audio_path,
+                    "duration_s": round(ref_duration, 2),
+                },
+            )
+
         try:
             top_k = int(self.config.get("top_k", 15))
         except (TypeError, ValueError):
