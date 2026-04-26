@@ -102,6 +102,16 @@ class VoxCpmCloningProvider(CloningProvider):
     def load(self) -> None:
         if self._loaded and self._model is not None:
             return
+        # VoxCPM 内部对部分前向走 torch.compile；torch._dynamo trace einops 0.8.2 的
+        # `str.isalnum(char)` unbound 调用时挂（dynamo polyfill 不支持该调用形式）。
+        # suppress_errors=True 让 dynamo 在 trace 失败时 fallback 到 eager mode——
+        # 失去 compile 加速但能跑；Pascal 卡上 compile 本来收益就有限，可接受。
+        try:
+            import torch._dynamo  # type: ignore[import-not-found]
+            torch._dynamo.config.suppress_errors = True
+        except ImportError:
+            pass
+
         try:
             from voxcpm import VoxCPM  # type: ignore[import-not-found]
         except ImportError as e:
