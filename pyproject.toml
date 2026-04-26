@@ -11,7 +11,8 @@ license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "pydantic>=2.9",
+    # GPT-SoVITS 钉 pydantic<=2.10.6；与项目 >=2.9 取交集
+    "pydantic>=2.9,<=2.10.6",
     "pydantic-settings>=2.6",
     "sqlmodel>=0.0.22",
     "alembic>=1.14",
@@ -44,16 +45,45 @@ dependencies = [
     # GPT-SoVITS 仓库为 import-from-tree 风格（Dockerfile git clone 到 /opt + PYTHONPATH 注入），
     # 但其 requirements.txt 里的 Python 依赖必须装到 .venv 里运行时才能 import。
     # 来源：https://raw.githubusercontent.com/RVC-Boss/GPT-SoVITS/main/requirements.txt
-    # （commit ea2d2a8）
-    "pytorch-lightning>=2.4",     # 训练/推理框架
-    "onnxruntime-gpu",            # ONNX 加速路径（platform_machine 由 uv 自动加 marker）
-    "funasr==1.0.27",             # 阿里语音工具包（ASR/VAD/标点对齐参考音频）
-    "transformers>=4.43,<=4.50",  # GPT-SoVITS 钉死区间；voxcpm 仅要 >=4.36 兼容
-    "peft<0.18.0",                # LoRA 微调框架（推理也需）
-    "ctranslate2>=4.0,<5",        # faster-whisper 已 transitive 拉；显式上 pin 兼容 GPT-SoVITS
-    "numba",                      # numpy JIT；GPT-SoVITS 处理 mel 用
-    "librosa==0.10.2",            # GPT-SoVITS 钉死；voxcpm 接受
-    "numpy<2.0",                  # GPT-SoVITS / voxcpm 都不耐 numpy 2.x
+    # （commit ea2d2a8）— 整套 requirements.txt 必须穷举写入，否则 TTS.py 链式
+    # import 在某个子模块（AR / module / BigVGAN / feature_extractor / tools / text）
+    # 撞 ModuleNotFoundError；之前漏 x_transformers 已经踩过坑。
+    # PyQt5 / matplotlib / tensorboard 等仅 webui/training 用，不进推理路径，省略。
+    "pytorch-lightning>=2.4",
+    "onnxruntime-gpu",
+    "funasr==1.0.27",
+    "transformers>=4.43,<=4.50",
+    "peft<0.18.0",
+    "ctranslate2>=4.0,<5",
+    "numba",
+    "librosa==0.10.2",
+    "numpy<2.0",
+    "torchmetrics<=1.5",
+    "av>=11",
+    # —— GPT-SoVITS 模型核心 ——
+    "x-transformers",
+    "rotary-embedding-torch",
+    # —— 文本前端 / g2p / 多语种（即便只输出中文也会 chain-import 全部）——
+    # gradio：GPT-SoVITS requirements 钉 <5 但只 webui 用；voxcpm 钉 >=6，
+    # 两者冲突。verify 过 TTS_infer_pack 推理路径不 import gradio，从这里移除，
+    # 让 voxcpm 拉 gradio 6+ 满足它自己的 webui 需求即可。
+    "cn2an",
+    "pypinyin",
+    "pyopenjtalk>=0.4.1",
+    "g2p-en",
+    "sentencepiece",
+    "jieba",
+    "jieba-fast",
+    "split-lang",
+    "fast-langdetect>=0.3.1",
+    "wordsegment",
+    "tojyutping",
+    "g2pk2",
+    "ko-pron",
+    "opencc",
+    "python-mecab-ko;sys_platform != 'win32'",
+    "chardet",
+    "psutil",
 ]
 
 [project.optional-dependencies]
