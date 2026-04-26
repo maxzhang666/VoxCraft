@@ -25,8 +25,13 @@ RUN pnpm build
 # -------- Stage 2: Python build --------
 FROM python:3.13-slim-bookworm AS py-build
 
+# UV_COMPILE_BYTECODE=0：不让 uv 预编译 .pyc。原因：.pyc 头部嵌入 source mtime，
+# 而 source 的 mtime 来自 docker COPY 时的 host 时间——每次构建都不同，
+# 即使 pyproject/uv.lock 字节级未变，.venv 字节也不稳定 → COPY .venv 输出的
+# layer blob hash 每次新 → client 强制重下 ~3.2GB。Python 容器首次 import
+# 会 lazy 编译 .py → __pycache__，对长驻 uvicorn 进程仅冷启动多 1-2s。
 ENV UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1
+    UV_COMPILE_BYTECODE=0
 
 # voxcpm 引入的部分 transitive deps（umap-learn / wetext 等）在 linux+py3.13 上
 # 可能没有预编 wheel，需要 sdist 源码编译；slim base 默认无 gcc 会让 uv sync 退出 1。
