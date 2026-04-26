@@ -35,11 +35,14 @@ ENV UV_LINK_MODE=copy \
 
 # voxcpm 引入的部分 transitive deps（umap-learn / wetext 等）在 linux+py3.11 上
 # 可能没有预编 wheel，需要 sdist 源码编译；slim base 默认无 gcc 会让 uv sync 退出 1。
-# 装 build-essential + python3-dev 覆盖 source-build 需要；仅 py-build 中间层，
+# git：用于 git clone GPT-SoVITS 源码到 /opt（GPT-SoVITS 是 import-from-tree
+# 风格，不发 PyPI 包；Python 依赖通过 pyproject 装到 .venv，仓库本身放 /opt 由
+# runtime 阶段 PYTHONPATH 注入）。
+# 装 build-essential + python3-dev + git 覆盖以上需求；仅 py-build 中间层，
 # 不影响 runtime image 大小。
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      build-essential python3-dev \
+      build-essential python3-dev git \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /usr/local/bin/
@@ -52,6 +55,17 @@ WORKDIR /app
 # 项目代码靠 runtime 阶段的 PYTHONPATH=/app/src 加载，无需写入 site-packages。
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
+
+# GPT-SoVITS：仓库无 PyPI 包，但它 import GPT_SoVITS.* 是裸目录形式
+# （非 setup.py install），所以 git clone 到 /opt + runtime PYTHONPATH 注入即可。
+# 钉到 main HEAD commit hash 避免漂移；shallow clone (depth=1) 节省镜像层。
+# Python 依赖（funasr/pytorch-lightning/onnxruntime-gpu/...）已由上面 uv sync 装入 .venv。
+ARG GPT_SOVITS_COMMIT=ea2d2a81667239d37615697e8f0056e35bab2db6
+RUN git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS.git /opt/GPT-SoVITS \
+ && cd /opt/GPT-SoVITS \
+ && git fetch --depth 1 origin "$GPT_SOVITS_COMMIT" \
+ && git checkout "$GPT_SOVITS_COMMIT" \
+ && rm -rf .git
 
 # 源码 + 配置仅复制不安装
 COPY src ./src
@@ -68,7 +82,7 @@ FROM python:3.11-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app/src \
+    PYTHONPATH=/app/src:/opt/GPT-SoVITS \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
@@ -88,6 +102,9 @@ COPY --from=py-build /app/.venv /app/.venv
 COPY --from=py-build /app/src /app/src
 COPY --from=py-build /app/migrations /app/migrations
 COPY --from=py-build /app/alembic.ini /app/alembic.ini
+# GPT-SoVITS 仓库仅含 Python 源码（无大模型权重），约 10-20MB；
+# 单独一层方便 commit 升级时增量拉
+COPY --from=py-build /opt/GPT-SoVITS /opt/GPT-SoVITS
 COPY --from=web-build /web/dist ./static
 
 # 故意放在 COPY 之后：调整 runtime ENV（如 TORCHDYNAMO_DISABLE）不应让 .venv 层

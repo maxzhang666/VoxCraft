@@ -2,9 +2,8 @@
 name = "voxcraft"
 version = "0.1.0"
 description = "自托管多模态音频推理服务 (ASR / TTS / 克隆 / 人声分离)"
-# OpenVoice v2 集成需要：MeloTTS 上游 numpy<2 / 自身 transitive deps（pyopenjtalk/jamo 等）
-# 在 cp313 上无 wheel；OpenVoice 也只测到 3.11。降 Python 到 3.11 是 OpenVoice
-# 集成的硬前提。voxcpm/torch 2.6/whisper 在 3.11 上同样 OK
+# 3.11 是 GPT-SoVITS 集成的甜蜜点：funasr/numba/pyopenjtalk 在 cp313 没 wheel；
+# 官方 README 测试矩阵 3.9/3.10/3.11；voxcpm/torch 2.6/whisper 在 3.11 OK
 requires-python = ">=3.11,<3.12"
 readme = "README.md"
 license = { text = "MIT" }
@@ -23,7 +22,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "faster-whisper>=1.0",
     "piper-tts>=1.4.2",
-    "modelscope>=1.36.1",
+    # modelscope：项目仅用 snapshot_download；GPT-SoVITS 也依赖 modelscope 拉模型
+    "modelscope>=1.27,<2",
     "openai>=1.50",
     "ffmpeg-python>=0.2.0",
     "zhconv>=1.4.3",
@@ -40,6 +40,20 @@ dependencies = [
     "nvidia-ml-py>=12",
     # 声纹克隆 Provider：默认随项目装；用户在「模型库」下载 VoxCPM 模型后即可用
     "voxcpm>=2.0",
+    # ==== GPT-SoVITS v2Pro 集成所需 ====
+    # GPT-SoVITS 仓库为 import-from-tree 风格（Dockerfile git clone 到 /opt + PYTHONPATH 注入），
+    # 但其 requirements.txt 里的 Python 依赖必须装到 .venv 里运行时才能 import。
+    # 来源：https://raw.githubusercontent.com/RVC-Boss/GPT-SoVITS/main/requirements.txt
+    # （commit ea2d2a8）
+    "pytorch-lightning>=2.4",     # 训练/推理框架
+    "onnxruntime-gpu",            # ONNX 加速路径（platform_machine 由 uv 自动加 marker）
+    "funasr==1.0.27",             # 阿里语音工具包（ASR/VAD/标点对齐参考音频）
+    "transformers>=4.43,<=4.50",  # GPT-SoVITS 钉死区间；voxcpm 仅要 >=4.36 兼容
+    "peft<0.18.0",                # LoRA 微调框架（推理也需）
+    "ctranslate2>=4.0,<5",        # faster-whisper 已 transitive 拉；显式上 pin 兼容 GPT-SoVITS
+    "numba",                      # numpy JIT；GPT-SoVITS 处理 mel 用
+    "librosa==0.10.2",            # GPT-SoVITS 钉死；voxcpm 接受
+    "numpy<2.0",                  # GPT-SoVITS / voxcpm 都不耐 numpy 2.x
 ]
 
 [project.optional-dependencies]
