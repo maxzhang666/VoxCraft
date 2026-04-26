@@ -253,6 +253,36 @@ class GptSoVitsProvider(CloningProvider):
             model_dir=model_dir,
         )
 
+    def _ensure_runtime_cache_dirs(self, model_dir: str) -> None:
+        """预建 GPT-SoVITS 内部 lib 期望的 cache 子目录（不在 HF 仓库内）。
+
+        穷举触发列表（v2Pro 推理路径）：
+        - `pretrained_models/fast_langdetect/`：由 text/LangSegmenter/langsegmenter.py
+          顶层 import 时硬写为 LangDetectConfig.cache_dir。fast_langdetect 库要求
+          目录先存在才能运行，否则抛 "Cache directory not found"。lib 第一次跑
+          自动下载语种检测模型到该目录。
+        - 其他 cwd-relative 路径（gsv-v4-pretrained / bigvgan_v2_24khz_100band_256x）
+          仅 v3/v4 用，v2Pro 不触发；G2PWModel 由 GPT-SoVITS 自身的
+          download_and_decompress 自动下载，无需预建。
+
+        pretrained_models 已 symlink 到 model_dir，所以在 model_dir 下 mkdir
+        即可。如果 user 的卷只读（极罕见）会 log 警告但不 raise——让运行时
+        报真正的"Cache directory not found"，用户更易定位是卷权限问题。
+        """
+        runtime_cache_subdirs = ["fast_langdetect"]
+        for sub in runtime_cache_subdirs:
+            target = Path(model_dir, sub)
+            try:
+                target.mkdir(exist_ok=True)
+            except OSError as e:
+                log.warning(
+                    "gpt_sovits.runtime_cache_dir_create_failed",
+                    target=str(target),
+                    error=str(e),
+                    hint="model_dir may be mounted read-only; mount with rw or "
+                    "pre-create the directory on host before container start.",
+                )
+
     def load(self) -> None:
         if self._loaded and self._tts is not None:
             return
@@ -266,11 +296,13 @@ class GptSoVitsProvider(CloningProvider):
         version = self.config.get("version", "v2Pro")
         paths = self._build_paths(model_dir, version)
 
-        # 必须在 import GPT_SoVITS 之前把 pretrained_models symlink 建好，
-        # 因为 sv.py 等模块在 import 时不一定加载 ckpt（lazy），但 init_*_weights
-        # 在 TTS() 构造时立即调用，会用 cwd 相对路径找文件
+        # 必须在 import GPT_SoVITS 之前把 pretrained_models symlink 建好 +
+        # 预创建运行时 cache 目录（fast_langdetect 等）。GPT-SoVITS 的多个模块在
+        # import 时（顶层代码）就用 cwd 相对路径访问文件，TTS() 构造时也会触发；
+        # 这两步必须在第一次 import GPT_SoVITS 之前完成。
         gpt_sovits_root = os.environ.get("GPT_SOVITS_ROOT", "/opt/GPT-SoVITS")
         self._link_pretrained_models(model_dir, gpt_sovits_root)
+        self._ensure_runtime_cache_dirs(model_dir)
 
         TTS, TTS_Config = self._import_gpt_sovits()
 
