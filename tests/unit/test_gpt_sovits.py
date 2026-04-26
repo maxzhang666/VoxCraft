@@ -13,15 +13,27 @@ from voxcraft.providers.cloning.gpt_sovits import GptSoVitsProvider
 
 
 @pytest.fixture
-def model_dir(tmp_path: Path) -> Path:
-    """构造一个 v2Pro 标准目录结构（空文件占位即可，Provider 只检查存在性）。"""
-    (tmp_path / "chinese-roberta-wwm-ext-large").mkdir()
-    (tmp_path / "chinese-hubert-base").mkdir()
-    (tmp_path / "s1v3.ckpt").touch()
-    (tmp_path / "v2Pro").mkdir()
-    (tmp_path / "v2Pro" / "s2Gv2Pro.pth").touch()
-    (tmp_path / "v2Pro" / "s2Gv2ProPlus.pth").touch()
-    return tmp_path
+def model_dir(tmp_path: Path, monkeypatch) -> Path:
+    """构造一个 v2Pro 标准目录结构（空文件占位即可，Provider 只检查存在性）。
+
+    同时把 GPT_SOVITS_ROOT 改到 tmp，让 _link_pretrained_models 的 symlink
+    操作落在 tmp 而非 /opt（测试机一般无 /opt 写权限）。
+    """
+    md = tmp_path / "models"
+    md.mkdir()
+    (md / "chinese-roberta-wwm-ext-large").mkdir()
+    (md / "chinese-hubert-base").mkdir()
+    (md / "s1v3.ckpt").touch()
+    (md / "v2Pro").mkdir()
+    (md / "v2Pro" / "s2Gv2Pro.pth").touch()
+    (md / "v2Pro" / "s2Gv2ProPlus.pth").touch()
+    (md / "sv").mkdir()
+    (md / "sv" / "pretrained_eres2netv2w24s4ep4.ckpt").touch()
+
+    fake_repo = tmp_path / "fake-gpt-sovits"
+    (fake_repo / "GPT_SoVITS").mkdir(parents=True)
+    monkeypatch.setenv("GPT_SOVITS_ROOT", str(fake_repo))
+    return md
 
 
 @pytest.fixture

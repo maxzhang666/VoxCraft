@@ -2113,16 +2113,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyopenjtalk"
-version = "0.4.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/58/74/ccd31c696f047ba381f9b11a504bf1199756c3f30f3de64e3eeb83e10b4a/pyopenjtalk-0.4.1.tar.gz", hash = "sha256:d5ada46f7fc2b52c1c79c273eb9668ff6ad7ab276a8db9d8be119ef93440f0dc", size = 1397999, upload-time = "2025-04-08T06:27:46.528Z" }
-
-[[package]]
 name = "pyparsing"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3136,7 +3126,6 @@ dependencies = [
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyopenjtalk" },
     { name = "pypinyin" },
     { name = "python-dotenv" },
     { name = "python-mecab-ko", marker = "sys_platform != 'win32'" },
@@ -3200,7 +3189,6 @@ requires-dist = [
     { name = "psutil" },
     { name = "pydantic", specifier = ">=2.9,<=2.10.6" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "pyopenjtalk", specifier = ">=0.4.1" },
     { name = "pypinyin" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },

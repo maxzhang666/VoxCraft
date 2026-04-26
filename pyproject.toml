@@ -69,7 +69,11 @@ dependencies = [
     # 让 voxcpm 拉 gradio 6+ 满足它自己的 webui 需求即可。
     "cn2an",
     "pypinyin",
-    "pyopenjtalk>=0.4.1",
+    # pyopenjtalk 跳过：sdist-only（PyPI 没 cp311 wheel），首次构建编 OpenJTalk
+    # C 库 ~30 min。仅在 prompt_lang='ja' 或 text_lang='ja' 时用，本项目场景
+    # （非中文音色 → 中文输出）不需要日语 g2p。如将来要日语，进容器手动
+    # `uv pip install pyopenjtalk` 即可（或重新加回 pyproject）。
+    # "pyopenjtalk>=0.4.1",
     "g2p-en",
     "sentencepiece",
     "jieba",

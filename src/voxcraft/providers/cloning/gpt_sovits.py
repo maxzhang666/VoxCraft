@@ -181,21 +181,68 @@ class GptSoVitsProvider(CloningProvider):
                 f"Unsupported version: {version!r}; expected one of {list(_LAYOUTS)}",
                 details={"provider": self.name},
             )
+        # v2Pro 的 sv 验证模型由 GPT_SoVITS/sv.py 用 cwd 相对路径硬加载，
+        # 必须存在于 model_dir/sv/pretrained_eres2netv2w24s4ep4.ckpt
+        # （symlink pretrained_models → model_dir 后可被解析）
+        required_extra = ["sv/pretrained_eres2netv2w24s4ep4.ckpt"]
         paths = {k: str(Path(model_dir) / v) for k, v in layout.items()}
-        missing = [k for k, p in paths.items() if not Path(p).exists()]
-        if missing:
+        missing_files = [v for v in layout.values() if not (Path(model_dir) / v).exists()]
+        missing_files += [
+            v for v in required_extra if not (Path(model_dir) / v).exists()
+        ]
+        if missing_files:
             raise ModelLoadError(
-                f"GPT-SoVITS missing files: {missing}. 检查 model_dir 是否完整下载 "
-                "lj1995/GPT-SoVITS（chinese-roberta-wwm-ext-large/ + chinese-hubert-base/ "
-                "+ s1v3.ckpt + v2Pro/*.pth）",
-                details={"provider": self.name, "model_dir": model_dir, "missing": missing},
+                f"GPT-SoVITS missing files in model_dir: {missing_files}. "
+                "检查 model_dir 是否完整下载 lj1995/GPT-SoVITS（应含 "
+                "chinese-roberta-wwm-ext-large/ + chinese-hubert-base/ + s1v3.ckpt + "
+                "v2Pro/*.pth + sv/pretrained_eres2netv2w24s4ep4.ckpt）",
+                details={"provider": self.name, "model_dir": model_dir, "missing": missing_files},
             )
         return paths
+
+    def _link_pretrained_models(self, model_dir: str, gpt_sovits_root: str) -> None:
+        """把 model_dir 整体 symlink 到 /opt/GPT-SoVITS/GPT_SoVITS/pretrained_models。
+
+        GPT-SoVITS 内部多处硬编码 `GPT_SoVITS/pretrained_models/...` 相对路径
+        （如 sv.py、init_*_weights、bigvgan loader），全部走 cwd 相对解析。
+        symlink 让这些路径指向 user 真正的模型目录，无需改 GPT-SoVITS 源码。
+        """
+        target = os.path.join(gpt_sovits_root, "GPT_SoVITS", "pretrained_models")
+        # 已是正确 symlink → 无操作
+        if os.path.islink(target):
+            try:
+                if os.path.realpath(target) == os.path.realpath(model_dir):
+                    return
+                os.unlink(target)
+            except OSError:
+                return
+        elif os.path.exists(target):
+            # 仓库本身的 pretrained_models 目录（git 占位，多半是空目录或仅含
+            # README/__init__.py），先尝试空目录删；非空就跳过 symlink，
+            # 让 user 自行处理（此场景不应发生，但留出降级）
+            try:
+                os.rmdir(target)
+            except OSError:
+                log.warning(
+                    "gpt_sovits.symlink_skipped",
+                    reason="pretrained_models is a non-empty dir, cannot replace with symlink",
+                    target=target,
+                )
+                return
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            os.symlink(model_dir, target)
+            log.info(
+                "gpt_sovits.pretrained_models.linked",
+                target=target,
+                model_dir=model_dir,
+            )
+        except OSError as e:
+            log.warning("gpt_sovits.symlink_failed", error=str(e))
 
     def load(self) -> None:
         if self._loaded and self._tts is not None:
             return
-        TTS, TTS_Config = self._import_gpt_sovits()
 
         model_dir = self.config.get("model_dir") or ""
         if not model_dir:
@@ -205,6 +252,14 @@ class GptSoVitsProvider(CloningProvider):
             )
         version = self.config.get("version", "v2Pro")
         paths = self._build_paths(model_dir, version)
+
+        # 必须在 import GPT_SoVITS 之前把 pretrained_models symlink 建好，
+        # 因为 sv.py 等模块在 import 时不一定加载 ckpt（lazy），但 init_*_weights
+        # 在 TTS() 构造时立即调用，会用 cwd 相对路径找文件
+        gpt_sovits_root = os.environ.get("GPT_SOVITS_ROOT", "/opt/GPT-SoVITS")
+        self._link_pretrained_models(model_dir, gpt_sovits_root)
+
+        TTS, TTS_Config = self._import_gpt_sovits()
 
         target_device = resolve_device(self.config.get("device"))
         is_half = str(self.config.get("is_half", "false")).lower() == "true"
