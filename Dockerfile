@@ -80,8 +80,11 @@ RUN git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS.git /opt/GPT-SoVI
  && cd /opt/GPT-SoVITS \
  && git fetch --depth 1 origin "$GPT_SOVITS_COMMIT" \
  && git checkout "$GPT_SOVITS_COMMIT" \
- && rm -rf .git \
+ && rm -rf .git GPT_SoVITS/pretrained_models \
  && find /opt/GPT-SoVITS \( -type f -o -type d \) -exec touch -h -d @0 {} +
+# 删 GPT_SoVITS/pretrained_models（仓库里只有一个 .gitignore 占位文件）：
+# 让 Provider load() 时能直接 symlink 该路径到 user model_dir 而不被
+# 占位文件挡住——之前一直撞 sv ckpt 找不到就是这个原因
 # 同样把 GPT-SoVITS 仓库 mtime 标准化，让该层 blob 跨构建稳定
 
 # 源码 + 配置仅复制不安装

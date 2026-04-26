@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
+import tempfile
 import uuid
 import wave
 from pathlib import Path
@@ -206,39 +208,50 @@ class GptSoVitsProvider(CloningProvider):
         GPT-SoVITS 内部多处硬编码 `GPT_SoVITS/pretrained_models/...` 相对路径
         （如 sv.py、init_*_weights、bigvgan loader），全部走 cwd 相对解析。
         symlink 让这些路径指向 user 真正的模型目录，无需改 GPT-SoVITS 源码。
+
+        仓库 git clone 出来 pretrained_models/ 含一个 .gitignore 占位文件——
+        Dockerfile 已先 `rm -rf GPT_SoVITS/pretrained_models`；本函数兜底
+        force replace（防 Dockerfile 漏改 / 用户挂载了卷 / 重启场景）。
         """
         target = os.path.join(gpt_sovits_root, "GPT_SoVITS", "pretrained_models")
-        # 已是正确 symlink → 无操作
+        # 已是正确 symlink → 跳过
         if os.path.islink(target):
             try:
                 if os.path.realpath(target) == os.path.realpath(model_dir):
                     return
-                os.unlink(target)
             except OSError:
-                return
-        elif os.path.exists(target):
-            # 仓库本身的 pretrained_models 目录（git 占位，多半是空目录或仅含
-            # README/__init__.py），先尝试空目录删；非空就跳过 symlink，
-            # 让 user 自行处理（此场景不应发生，但留出降级）
+                pass
             try:
-                os.rmdir(target)
-            except OSError:
-                log.warning(
-                    "gpt_sovits.symlink_skipped",
-                    reason="pretrained_models is a non-empty dir, cannot replace with symlink",
-                    target=target,
-                )
-                return
+                os.unlink(target)
+            except OSError as e:
+                raise ModelLoadError(
+                    f"Cannot remove stale symlink {target}: {e}",
+                    details={"provider": self.name, "target": target},
+                ) from e
+        elif os.path.exists(target):
+            # 强制清掉仓库占位（.gitignore / 空子目录等）；这是 Dockerfile 中
+            # `rm -rf GPT_SoVITS/pretrained_models` 的运行时兜底
+            try:
+                shutil.rmtree(target)
+            except OSError as e:
+                raise ModelLoadError(
+                    f"Cannot replace {target} with symlink: {e}. "
+                    "Check that /opt/GPT-SoVITS is not mounted read-only.",
+                    details={"provider": self.name, "target": target},
+                ) from e
         try:
             os.makedirs(os.path.dirname(target), exist_ok=True)
             os.symlink(model_dir, target)
-            log.info(
-                "gpt_sovits.pretrained_models.linked",
-                target=target,
-                model_dir=model_dir,
-            )
         except OSError as e:
-            log.warning("gpt_sovits.symlink_failed", error=str(e))
+            raise ModelLoadError(
+                f"Failed to symlink pretrained_models: {e}",
+                details={"provider": self.name, "target": target, "src": model_dir},
+            ) from e
+        log.info(
+            "gpt_sovits.pretrained_models.linked",
+            target=target,
+            model_dir=model_dir,
+        )
 
     def load(self) -> None:
         if self._loaded and self._tts is not None:
