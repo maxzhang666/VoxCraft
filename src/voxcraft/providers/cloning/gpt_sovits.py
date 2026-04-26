@@ -11,7 +11,12 @@ API 来源：RVC-Boss/GPT-SoVITS commit ea2d2a8 — GPT_SoVITS/TTS_infer_pack/TT
 - Provider 不依赖 yaml 配置文件，运行时直接构造 dict 传给 TTS_Config
 - 跨语种克隆：text_lang="zh" + prompt_lang="en"/"ja"/"ko" 即可
 
-注意：
+import 注意：
+- GPT_SoVITS 目录**没有 __init__.py**，不是 Python package。它内部 TTS.py 用
+  `from AR.* / from module.* / from TTS_infer_pack.* / from feature_extractor.* /
+  from tools.* / from process_ckpt import ...` 这种扁平 import——所有子目录
+  必须在 sys.path 里。Dockerfile 已经把 /opt/GPT-SoVITS/GPT_SoVITS 加入 PYTHONPATH，
+  所以这里直接写 `from TTS_infer_pack.TTS import ...`（不是 `from GPT_SoVITS.TTS_infer_pack...`）。
 - TTS_Config 内部 default_configs 路径相对于 cwd（"GPT_SoVITS/pretrained_models/..."）；
   当用户传的绝对路径有任一不存在时会回退到这些相对路径，找不到资源会硬崩。
   load() 切到 /opt/GPT-SoVITS 让 fallback 能解析（但优先确保用户路径都存在）。
@@ -136,20 +141,36 @@ class GptSoVitsProvider(CloningProvider):
         self._sample_rate: int = 32000  # v2Pro 默认；load 后从模型读取覆盖
 
     def _import_gpt_sovits(self):
-        """在 import 前 chdir 到仓库根，让 GPT-SoVITS 内部相对路径（g2p 词典等）可解析。"""
+        """在 import 前 chdir 到仓库根，让 GPT-SoVITS 内部相对路径（g2p 词典等）可解析。
+
+        Import shape：GPT-SoVITS/GPT_SoVITS/TTS.py 用 `from AR.* / from module.* /
+        from TTS_infer_pack.* import ...` 这种扁平 import。Dockerfile 已经把
+        /opt/GPT-SoVITS/GPT_SoVITS 加进 PYTHONPATH，所以 TTS_infer_pack 是顶层包。
+        万一 PYTHONPATH 没生效（本地开发或 worker 进程未继承），sys.path.insert 兜底。
+        """
         gpt_sovits_root = os.environ.get("GPT_SOVITS_ROOT", "/opt/GPT-SoVITS")
+        gpt_sovits_pkg = os.path.join(gpt_sovits_root, "GPT_SoVITS")
         if os.path.isdir(gpt_sovits_root):
             try:
                 os.chdir(gpt_sovits_root)
             except OSError:
                 pass
+        # 兜底：如果 PYTHONPATH 没把 GPT_SoVITS 子目录加入 sys.path，主动加上
+        import sys as _sys  # noqa: PLC0415
+        for p in (gpt_sovits_root, gpt_sovits_pkg):
+            if os.path.isdir(p) and p not in _sys.path:
+                _sys.path.insert(0, p)
         try:
-            from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config  # type: ignore[import-not-found]
+            from TTS_infer_pack.TTS import TTS, TTS_Config  # type: ignore[import-not-found]
         except ImportError as e:
             raise ModelLoadError(
-                "GPT-SoVITS not installed; rebuild image (Dockerfile git clones to "
-                "/opt/GPT-SoVITS + runtime PYTHONPATH 注入)",
-                details={"provider": self.name},
+                f"GPT-SoVITS import failed: {e}. "
+                "Possible causes: (1) image was built without /opt/GPT-SoVITS git clone; "
+                "(2) PYTHONPATH does not include /opt/GPT-SoVITS/GPT_SoVITS; "
+                "(3) a transitive dependency (peft / pytorch_lightning / torchaudio / "
+                "ffmpeg / funasr) is missing or broken in .venv. Check the import "
+                "error message above for the actual missing module.",
+                details={"provider": self.name, "import_error": str(e)},
             ) from e
         return TTS, TTS_Config
 

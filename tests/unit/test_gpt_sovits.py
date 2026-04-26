@@ -46,16 +46,16 @@ def mock_gpt_sovits(monkeypatch):
     class _FakeTTSConfig:
         pass
 
-    fake_tts_module = ModuleType("GPT_SoVITS.TTS_infer_pack.TTS")
+    # GPT-SoVITS 的 import 形态是 `from TTS_infer_pack.TTS import ...`（扁平），
+    # 因为 Dockerfile 把 /opt/GPT-SoVITS/GPT_SoVITS 加进了 PYTHONPATH。
+    fake_tts_module = ModuleType("TTS_infer_pack.TTS")
     fake_tts_module.TTS = _FakeTTS
     fake_tts_module.TTS_Config = _FakeTTSConfig
 
-    fake_pack_module = ModuleType("GPT_SoVITS.TTS_infer_pack")
-    fake_root_module = ModuleType("GPT_SoVITS")
+    fake_pack_module = ModuleType("TTS_infer_pack")
 
-    monkeypatch.setitem(sys.modules, "GPT_SoVITS", fake_root_module)
-    monkeypatch.setitem(sys.modules, "GPT_SoVITS.TTS_infer_pack", fake_pack_module)
-    monkeypatch.setitem(sys.modules, "GPT_SoVITS.TTS_infer_pack.TTS", fake_tts_module)
+    monkeypatch.setitem(sys.modules, "TTS_infer_pack", fake_pack_module)
+    monkeypatch.setitem(sys.modules, "TTS_infer_pack.TTS", fake_tts_module)
     return captured
 
 
@@ -102,13 +102,14 @@ def test_load_missing_model_dir_raises(mock_gpt_sovits):
 
 
 def test_load_without_package_raises(monkeypatch, model_dir: Path):
-    # 模拟未装 GPT-SoVITS（chdir 不影响 import）
-    monkeypatch.setitem(sys.modules, "GPT_SoVITS", None)
-    monkeypatch.setitem(sys.modules, "GPT_SoVITS.TTS_infer_pack.TTS", None)
+    # 模拟未装 GPT-SoVITS / sys.path 没注入；强制 import 失败
+    monkeypatch.setitem(sys.modules, "TTS_infer_pack", None)
+    monkeypatch.setitem(sys.modules, "TTS_infer_pack.TTS", None)
     p = GptSoVitsProvider(name="gs", config={"model_dir": str(model_dir)})
     with pytest.raises(ModelLoadError) as exc:
         p.load()
-    assert "not installed" in exc.value.message.lower()
+    msg = exc.value.message.lower()
+    assert "import failed" in msg or "not installed" in msg
 
 
 def test_synthesize_requires_reference_audio(mock_gpt_sovits, model_dir: Path):

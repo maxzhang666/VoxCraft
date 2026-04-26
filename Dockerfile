@@ -91,7 +91,7 @@ FROM python:3.11-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app/src:/opt/GPT-SoVITS \
+    PYTHONPATH=/app/src:/opt/GPT-SoVITS:/opt/GPT-SoVITS/GPT_SoVITS \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
