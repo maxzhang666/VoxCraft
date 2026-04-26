@@ -103,12 +103,27 @@ class VoxCpmCloningProvider(CloningProvider):
         if self._loaded and self._model is not None:
             return
         # VoxCPM 内部对部分前向走 torch.compile；torch._dynamo trace einops 0.8.2 的
-        # `str.isalnum(char)` unbound 调用时挂（dynamo polyfill 不支持该调用形式）。
-        # suppress_errors=True 让 dynamo 在 trace 失败时 fallback 到 eager mode——
-        # 失去 compile 加速但能跑；Pascal 卡上 compile 本来收益就有限，可接受。
+        # `str.isalnum(char)` unbound 调用时挂（dynamo polyfill 不支持该调用形式），
+        # 抛 InternalTorchDynamoError 直接打到 Provider 层。
+        # suppress_errors 是软开关、时机偏晚——这里把 torch.compile 全局 monkey-patch
+        # 成 identity，让 voxcpm 内部所有 @torch.compile / torch.compile(...) 调用
+        # 直接退化为 eager；同时 Dockerfile 设 TORCHDYNAMO_DISABLE=1 作进程级兜底。
+        # Pascal 卡 compile 收益本就有限，eager 可接受。
         try:
-            import torch._dynamo  # type: ignore[import-not-found]
-            torch._dynamo.config.suppress_errors = True
+            import torch  # type: ignore[import-not-found]
+
+            def _noop_compile(model=None, **_kw):
+                if model is None:
+                    return lambda fn: fn  # 当装饰器用：@torch.compile(...)
+                return model  # 当函数用：torch.compile(model)
+
+            torch.compile = _noop_compile  # type: ignore[assignment]
+            try:
+                import torch._dynamo  # type: ignore[import-not-found]
+                torch._dynamo.config.suppress_errors = True
+                torch._dynamo.config.disable = True
+            except ImportError:
+                pass
         except ImportError:
             pass
 

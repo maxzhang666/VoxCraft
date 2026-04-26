@@ -65,7 +65,11 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app/src \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    # VoxCPM 内部 torch.compile 在 dynamo trace einops 0.8.2 的 unbound builtin
+    # 调用时挂；进程级 kill switch 让 dynamo 全程不 trace，Pascal 卡 compile
+    # 收益有限，eager 可接受。Provider 层另有 monkey-patch 双保险
+    TORCHDYNAMO_DISABLE=1
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
