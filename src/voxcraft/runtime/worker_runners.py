@@ -92,6 +92,14 @@ def run(
             from voxcraft.video.orchestrator import run_video_translate
             result = run_video_translate(req, lru, emit_event)
         else:
+            # TTS Job 在加载 cloning Provider 之前先 lazy 跑一次 ASR：如果选中的
+            # voice 之前没缓存过参考转写、且当前 cloning Provider 类需要参考转写，
+            # 就在这里先用 LRU 加载 ASR Provider 跑一次 transcribe → 落 audio_transcripts
+            # → 然后再 LRU 切到 cloning Provider。这样只一次 LRU swap，避免"先载
+            # cloning → 检测 cache miss → 切 ASR → 切回 cloning"的双 swap 浪费。
+            # cloning 不需要转写的情况（VoxCPM 2 基础克隆 / Piper 预设）下这里短路。
+            if req.kind == "tts":
+                _maybe_lazy_transcribe(req, lru)
             inst = instantiate(
                 req.class_name, name=req.provider_name, config=req.provider_config,
             )
@@ -196,6 +204,124 @@ def _run_asr(req: JobRequest, inst, emit: EmitFn | None) -> JobResult:
             "segment_count": len(segments),
             "segments": segments,
         },
+    )
+
+
+# cloning Provider 类是否会"用到"参考音频转写——注意是"用到"而非"必需"：
+# - GPT-SoVITS：原生支持 ref_text_free 模式，没转写也能跑（质量稍降）；但有转写
+#   质量更高
+# - VoxCPM 2：原生支持基础克隆模式，没转写也能跑；但有转写时升级到 ultimate cloning
+# - VoxCPM 1.x：硬需转写（voxcpm 库自身约束 prompt_wav_path + prompt_text 配对）
+# 列在这的目的：worker 在合成前 lazy 跑一次 ASR 把缓存填上，让两类 Provider 都能拿到
+# 最高质量。即使没 ASR 或 ASR 失败，Provider 自己有 fallback（除了 VoxCPM 1 会
+# fail-fast）——voice 不会因为没 ASR 就用不了。Piper 这类无 transcript 概念的
+# Provider 不在此列，整个 ASR 路径完全不进。
+_PROVIDERS_NEEDING_TRANSCRIPT: frozenset[str] = frozenset({
+    "GptSoVitsProvider",
+    "VoxCpmCloningProvider",
+})
+
+
+def _maybe_lazy_transcribe(req: JobRequest, lru: _LruOne) -> None:
+    """TTS Job 入口前的"按需补转写"：voice 没缓存过参考转写而当前 cloning Provider
+    类需要 → 用 LRU 加载默认 ASR Provider 跑一次 transcribe → 落 audio_transcripts。
+    随后 run() 流程会 instantiate cloning Provider 并 ensure_loaded（LRU 自动顶替
+    ASR），单次 swap。
+
+    设计原则：voice 与 ASR 解耦——抽取声纹时不跑 ASR、不依赖 ASR Provider 存在。
+    转写是"合成时"的实现细节，仅当某些 cloning Provider 类用到才按需触发。
+    Piper 这类无 transcript 需求的 Provider 完全不会进这条路径。
+
+    所有失败/跳过路径都**静默 return**，不抛——让请求照常进入 cloning Provider。
+    若真没 ASR Provider 又恰好是需要转写的 Provider，会在 synthesize 时由 Provider
+    自身 raise 上下文清晰的 InferenceError（"请配置 ASR Provider 或换不需转写的
+    Provider"），错误归属更准确。
+    """
+    if req.class_name not in _PROVIDERS_NEEDING_TRANSCRIPT:
+        return
+    voice_id = (req.request_meta or {}).get("voice_id", "")
+    if not voice_id or not voice_id.startswith("vx_"):
+        return  # preset 单音色 Provider 路径或无效 voice_id
+
+    from sqlmodel import Session, select  # noqa: PLC0415
+    from voxcraft.db.engine import get_engine  # noqa: PLC0415
+    from voxcraft.db.models import (  # noqa: PLC0415
+        AudioTranscript,
+        Provider as ProviderRow,
+        VoiceRef,
+    )
+
+    with Session(get_engine()) as s:
+        voice = s.get(VoiceRef, voice_id)
+        if voice is None or not voice.reference_audio_path:
+            return
+        audio_path = voice.reference_audio_path
+        if s.get(AudioTranscript, audio_path) is not None:
+            return  # 缓存命中，无需 ASR
+        # 选一个可用 ASR Provider：优先 is_default=True，否则取任一 enabled。
+        # 多数用户只有一个 ASR Provider 但未必把它设了"默认"；放宽避免误中"未配置"
+        # 路径
+        asr_row = s.exec(
+            select(ProviderRow).where(
+                ProviderRow.kind == "asr",
+                ProviderRow.enabled == True,  # noqa: E712
+            ).order_by(ProviderRow.is_default.desc())  # type: ignore[attr-defined]
+        ).first()
+        if asr_row is None:
+            log.info(
+                "lazy_transcribe.skip",
+                voice_id=voice_id, reason="no_enabled_asr_provider",
+            )
+            return
+        asr_class_name = asr_row.class_name
+        asr_name = asr_row.name
+        asr_config = dict(asr_row.config or {})
+
+    # 加载 ASR Provider 到 LRU——cloning Provider 此刻还未 instantiate，LRU 要么空、
+    # 要么是上一个 Job 残留（ensure_loaded 会自动 unload 它）。
+    try:
+        asr_inst = instantiate(asr_class_name, name=asr_name, config=asr_config)
+        lru.ensure_loaded(asr_inst)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "lazy_transcribe.load_failed",
+            voice_id=voice_id, asr_provider=asr_name, error=str(e),
+        )
+        return
+
+    try:
+        r = asr_inst.transcribe(audio_path)  # type: ignore[union-attr]
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "lazy_transcribe.transcribe_failed",
+            voice_id=voice_id, audio_path=audio_path, error=str(e),
+        )
+        return
+
+    transcript = " ".join(
+        (seg.text or "").strip() for seg in r.segments
+    ).strip()
+    if not transcript:
+        log.warning(
+            "lazy_transcribe.empty",
+            voice_id=voice_id, audio_path=audio_path,
+            hint="audio may be silent / too short / noise-only",
+        )
+        return
+
+    # 落缓存——后续同一 voice 的合成请求直接命中，不再 ASR
+    with Session(get_engine()) as s:
+        s.merge(AudioTranscript(
+            audio_path=audio_path,
+            text=transcript,
+            language=r.language,
+            asr_provider=asr_name,
+        ))
+        s.commit()
+    log.info(
+        "lazy_transcribe.done",
+        voice_id=voice_id, asr_provider=asr_name,
+        text_chars=len(transcript), language=r.language,
     )
 
 

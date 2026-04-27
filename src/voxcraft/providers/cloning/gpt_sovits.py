@@ -425,25 +425,21 @@ class GptSoVitsProvider(CloningProvider):
             "prompt_text", ("voice_metadata", vm),
         )
         prompt_text = str(prompt_text_raw or "").strip()
-        if not prompt_text:
-            raise InferenceError(
-                "GPT-SoVITS requires the reference audio transcript, but none is "
-                "cached for this voice (audio_transcripts row missing). "
-                "Likely cause: no default ASR Provider was configured when the voice "
-                "was extracted. Configure an ASR Provider, then delete and re-extract "
-                "the voice — extraction auto-transcribes via ASR and caches the result.",
-                details={
-                    "provider": self.name,
-                    "reference": reference_audio_path,
-                    "voice_metadata_keys": list(vm.keys()),
-                },
-            )
+        # GPT-SoVITS 原生支持"无参考文本模式"(ref_text_free=True)：只用参考音频
+        # 的声学特征，不做韵律对齐，质量比有 prompt_text 时**稍低**但仍可用。这让
+        # voice 与 ASR 完全解耦——没配 ASR / ASR 失败 / 用户根本不打算配，都不
+        # 阻塞合成。worker 层 lazy ASR 会尽量补上转写以拿到最高质量；补不上就走
+        # ref_free 路径。
+        ref_text_free = not prompt_text
 
         # prompt_lang 与 prompt_text 同源：ASR 检测的语种（写在 audio_transcripts.language）。
-        # 缓存里没有就退到 "auto"——GPT-SoVITS 内部会再做一次粗检测；不会回到 Provider config。
+        # ref_text_free 模式下 GPT-SoVITS 不消化此字段；保持空串以避免误用。
         prompt_lang, prompt_lang_src = _pick(
             "prompt_lang", ("voice_metadata", vm), default="auto",
         )
+        if ref_text_free:
+            prompt_lang = ""
+            prompt_lang_src = "ref_text_free"
         text_lang, text_lang_src = _pick(
             "text_lang", ("generation_params", gp), default="zh",
         )
@@ -486,6 +482,7 @@ class GptSoVitsProvider(CloningProvider):
             "ref_audio_path": reference_audio_path,
             "prompt_text": prompt_text,
             "prompt_lang": prompt_lang,
+            "ref_text_free": ref_text_free,
             "top_k": top_k,
             "top_p": top_p,
             "temperature": temperature,
@@ -505,11 +502,13 @@ class GptSoVitsProvider(CloningProvider):
             "transcript_source": vm.get("transcript_source"),
         } if vm else None
         # 字段来源归属一览：每行 (final_value, where_it_came_from)，
-        # source ∈ {generation_params, voice_metadata, default}
-        # （provider_config 已被显式断开为兜底来源——见 _pick 调用处的注释）
+        # source ∈ {generation_params, voice_metadata, default, ref_text_free}
+        # ref_text_free=True 时 prompt_text/prompt_lang 不参与推理——单看 source
+        # 即可判断是不是走了无转写降级路径
         resolved = {
             "prompt_text": {"value": prompt_text, "source": prompt_text_src},
             "prompt_lang": {"value": prompt_lang, "source": prompt_lang_src},
+            "ref_text_free": {"value": ref_text_free, "source": "derived"},
             "text_lang": {"value": text_lang, "source": text_lang_src},
             "text_split_method": {
                 "value": text_split_method, "source": text_split_method_src,
@@ -572,6 +571,7 @@ class GptSoVitsProvider(CloningProvider):
             prompt_lang=prompt_lang,
             prompt_text_source=prompt_text_src,
             prompt_lang_source=prompt_lang_src,
+            ref_text_free=ref_text_free,
             text_split_method=text_split_method,
             top_k=top_k,
             top_p=top_p,

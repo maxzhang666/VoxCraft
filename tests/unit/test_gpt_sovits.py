@@ -132,10 +132,11 @@ def test_synthesize_requires_reference_audio(mock_gpt_sovits, model_dir: Path):
     assert "reference_audio_path is required" in exc.value.message
 
 
-def test_synthesize_requires_prompt_text_from_voice_metadata(
+def test_synthesize_falls_back_to_ref_text_free_without_transcript(
     mock_gpt_sovits, model_dir: Path,
 ):
-    """voice_metadata 没有 prompt_text → fail-fast；不再从 self.config 兜底。"""
+    """voice 没有缓存到的 prompt_text → 自动走 GPT-SoVITS 原生的 ref_text_free 模式；
+    不再 raise。voice 与 ASR 完全解耦——没 ASR Provider 也能用 GPT-SoVITS。"""
     p = GptSoVitsProvider(
         name="gs",
         config={
@@ -146,14 +147,38 @@ def test_synthesize_requires_prompt_text_from_voice_metadata(
         },
     )
     p.load()
-    with pytest.raises(InferenceError) as exc:
-        p.synthesize(
-            "你好", voice_id="gs_x", reference_audio_path="/r.wav",
-            voice_metadata={"reference_audio_path": "/r.wav"},  # 无 prompt_text
-        )
-    msg = exc.value.message.lower()
-    assert "transcript" in msg
-    assert "audio_transcripts" in msg or "asr" in msg
+    out = p.synthesize(
+        "你好", voice_id="vx_x", reference_audio_path="/r.wav",
+        voice_metadata={"reference_audio_path": "/r.wav"},  # 无 prompt_text
+    )
+    assert out.startswith(b"RIFF")
+
+    inputs = mock_gpt_sovits["inputs"]
+    assert inputs["ref_text_free"] is True
+    assert inputs["prompt_text"] == ""           # 空——ref_free 模式不消化
+    assert inputs["prompt_lang"] == ""           # 空——ref_free 模式不消化
+
+
+def test_synthesize_uses_transcript_when_voice_has_one(
+    mock_gpt_sovits, model_dir: Path,
+):
+    """voice_metadata 有 prompt_text → ref_text_free=False，走完整对齐路径。"""
+    p = GptSoVitsProvider(name="gs", config={"model_dir": str(model_dir)})
+    p.load()
+    out = p.synthesize(
+        "你好", voice_id="vx_x", reference_audio_path="/r.wav",
+        voice_metadata={
+            "reference_audio_path": "/r.wav",
+            "prompt_text": "ref transcript",
+            "prompt_lang": "en",
+        },
+    )
+    assert out.startswith(b"RIFF")
+
+    inputs = mock_gpt_sovits["inputs"]
+    assert inputs["ref_text_free"] is False
+    assert inputs["prompt_text"] == "ref transcript"
+    assert inputs["prompt_lang"] == "en"
 
 
 def test_synthesize_ignores_stale_provider_config(

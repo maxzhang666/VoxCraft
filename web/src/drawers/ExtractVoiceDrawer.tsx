@@ -1,5 +1,4 @@
 import {
-  Banner,
   Form,
   Input,
   InputNumber,
@@ -70,22 +69,7 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
         start_seconds: startSeconds ?? undefined,
         duration_seconds: durationSeconds ?? undefined,
       });
-      // 给前端用户讲清楚自动转写到底成没成——这是 GPT-SoVITS / VoxCPM 1.x
-      // 等需要参考转写的合成器能不能用这个 voice 的关键
-      if (r.transcribed && r.transcript_preview) {
-        Toast.success({
-          content:
-            `已添加音色 ${r.voice_id}（自动转写：「${r.transcript_preview}」）`,
-          duration: 6,
-        });
-      } else if (r.transcribe_warning) {
-        Toast.warning({
-          content: `音色 ${r.voice_id} 已保存：${r.transcribe_warning}`,
-          duration: 8,
-        });
-      } else {
-        Toast.success(`已添加音色 ${r.voice_id}`);
-      }
+      Toast.success(`已添加音色 ${r.voice_id}`);
       onSuccess();
     } catch {
       // axios 拦截器已 Toast
@@ -119,22 +103,6 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
             还没有 cloning 类型的 Provider；请先去「模型管理」创建一个
           </div>
         )}
-
-        <Banner
-          type="info"
-          fullMode={false}
-          icon={null}
-          closeIcon={null}
-          description={
-            <span style={{ fontSize: 12 }}>
-              抽取时会自动用默认 ASR Provider 把参考音频转写为文字（供
-              GPT-SoVITS / VoxCPM 1.x 等需要参考转写的合成器使用）。
-              请确保「模型管理」里有一个启用并设为默认的 ASR Provider，否则
-              生成的音色将无法被这类合成器使用。
-            </span>
-          }
-          style={{ marginBottom: "var(--vc-spacing-md)" }}
-        />
 
         <Form.Slot label="参考音频或视频（建议 5–30 秒清晰人声）">
           <Upload

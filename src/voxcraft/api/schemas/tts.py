@@ -52,10 +52,10 @@ class VoicesResponse(BaseModel):
 class VoiceExtractResponse(BaseModel):
     """POST /api/tts/voices/extract 返回：抽取声纹后的 voice 信息。
 
-    抽取过程中会自动用默认 ASR Provider 转写参考音频，写入 audio_transcripts 缓存
-    （供 GPT-SoVITS / VoxCPM 1.x 等需要参考转写的 Provider 复用）。本响应里的
-    transcribed=true 表示转写成功，false 表示未配置 ASR Provider 或 ASR 失败——
-    后者下，需要参考转写的 Provider 在合成时会 fail-fast 报清楚的错。
+    voice 与 ASR 完全解耦——抽取只保存音频 + 落 voice_refs 行，不依赖 ASR Provider
+    存在。需要参考转写的 cloning Provider（GPT-SoVITS / VoxCPM 1.x）在合成时由
+    worker 按需 lazy 跑一次 ASR 并缓存（audio_transcripts 表）；不需要参考转写的
+    Provider（Piper 预设等）从头到尾接触不到 ASR 概念。
     """
 
     voice_id: str
@@ -63,7 +63,3 @@ class VoiceExtractResponse(BaseModel):
     provider_name: str
     reference_audio_path: str
     duration_seconds: float | None = None
-    transcribed: bool = False
-    transcript_preview: str | None = None  # 前 200 字预览，仅供调试可见
-    transcript_language: str | None = None
-    transcribe_warning: str | None = None  # 失败/未跑时给前端展示的告警文案

@@ -7,14 +7,6 @@ export interface VoiceExtractResponse {
   provider_name: string;
   reference_audio_path: string;
   duration_seconds: number | null;
-  /** 后端是否成功用 ASR 自动转写参考音频 */
-  transcribed: boolean;
-  /** 转写文本预览（最多 200 字符）；仅用于让用户确认结果对不对 */
-  transcript_preview: string | null;
-  /** ASR 检测到的参考音频语种（zh/en/ja/...） */
-  transcript_language: string | null;
-  /** 未配置 ASR / ASR 失败时的告警文案；前端 Toast 提示用 */
-  transcribe_warning: string | null;
 }
 
 export interface ExtractVoiceParams {
@@ -30,7 +22,7 @@ export interface ExtractVoiceParams {
 export const listVoices = () =>
   api.get<{ voices: Voice[] }>("/tts/voices").then((r) => r.data.voices);
 
-export const extractVoice = (params: ExtractVoiceParams) => {
+export const extractVoice = async (params: ExtractVoiceParams) => {
   const fd = new FormData();
   fd.append("reference", params.reference);
   if (params.speaker_name) fd.append("speaker_name", params.speaker_name);
@@ -41,9 +33,8 @@ export const extractVoice = (params: ExtractVoiceParams) => {
   if (params.duration_seconds !== undefined) {
     fd.append("duration_seconds", String(params.duration_seconds));
   }
-  return api
-    .post<VoiceExtractResponse>("/tts/voices/extract", fd)
-    .then((r) => r.data);
+  const r = await api.post<VoiceExtractResponse>("/tts/voices/extract", fd);
+  return r.data;
 };
 
 export const deleteVoice = (voiceId: string) =>
