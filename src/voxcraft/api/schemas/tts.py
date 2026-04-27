@@ -18,10 +18,12 @@ class TtsGenerationParams(BaseModel):
     top_p: float | None = Field(None, gt=0, le=1.0)
     temperature: float | None = Field(None, gt=0, le=2.0)
     text_split_method: str | None = None  # GPT-SoVITS: cut0..cut5
-    # text_lang：生成时的目标输出语言（GPT-SoVITS 用），不传默认 "zh"。
-    # prompt_lang 不放这里——它是 voice 粒度（参考音频的语言固定），
-    # 由 worker 从 voice_refs 反查注入到 voice_metadata。
-    text_lang: str | None = None  # GPT-SoVITS: zh/en/ja/ko/yue
+    # text_lang / prompt_lang：生成时可调的语言代码。
+    # - text_lang：目标输出语言；不传默认 "zh"
+    # - prompt_lang：参考音频语言。voice_refs 里有默认值（抽取时填的），
+    #   生成时传则覆盖默认——用户可以在调试时换 auto/zh/en 看哪个准
+    text_lang: str | None = None
+    prompt_lang: str | None = None
     cfg_value: float | None = Field(None, gt=0)             # VoxCPM
     inference_timesteps: int | None = Field(None, ge=1, le=100)  # VoxCPM
 

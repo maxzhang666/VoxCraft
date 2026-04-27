@@ -444,8 +444,13 @@ class GptSoVitsProvider(CloningProvider):
             )
         except (TypeError, ValueError):
             temperature = 1.0
+        # prompt_lang 三层覆盖：generation_params（请求时调试覆盖）→
+        # voice_metadata（voice 抽取时设的默认）→ config → "auto"
         prompt_lang = (
-            vm.get("prompt_lang") or self.config.get("prompt_lang") or "auto"
+            gp.get("prompt_lang")
+            or vm.get("prompt_lang")
+            or self.config.get("prompt_lang")
+            or "auto"
         )
         text_split_method = (
             gp.get("text_split_method") or self.config.get("text_split_method") or "cut5"

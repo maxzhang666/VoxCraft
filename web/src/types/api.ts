@@ -131,6 +131,8 @@ export interface TtsGenerationParams {
   text_split_method?: string;
   /** 目标语言（GPT-SoVITS）：zh/en/ja/ko/yue。同一个 voice 可输出不同目标语言 */
   text_lang?: string;
+  /** 参考音频语言（GPT-SoVITS）：覆盖 voice 抽取时填的默认 prompt_lang，调试用 */
+  prompt_lang?: string;
   /** CFG 引导强度（VoxCPM） */
   cfg_value?: number;
   /** 推理步数（VoxCPM） */
