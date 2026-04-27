@@ -42,12 +42,14 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
   const [classes, setClasses] = useState<ProviderClassSchema[]>([]);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  // 高级生成参数（每次生成可调，不传走 Provider 默认）
+  // 高级生成参数（每次生成可调，不传走 Provider 默认）。
+  // UI 只显示当前 Provider class 实际识别的字段（其他字段填了也会被忽略）。
   const [advOpen, setAdvOpen] = useState(false);
   const [topK, setTopK] = useState<number | null>(null);
   const [topP, setTopP] = useState<number | null>(null);
   const [temperature, setTemperature] = useState<number | null>(null);
   const [textSplitMethod, setTextSplitMethod] = useState<string>("");
+  const [textLang, setTextLang] = useState<string>("");
   const [cfgValue, setCfgValue] = useState<number | null>(null);
   const [inferenceTimesteps, setInferenceTimesteps] = useState<number | null>(null);
 
@@ -82,6 +84,7 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
       setTopP(null);
       setTemperature(null);
       setTextSplitMethod("");
+      setTextLang("");
       setCfgValue(null);
       setInferenceTimesteps(null);
     }
@@ -91,6 +94,17 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
     () => providers.find((p) => p.name === providerName) ?? null,
     [providers, providerName],
   );
+
+  // Provider class 决定高级面板展示哪些字段：
+  // - GPT-SoVITS: top_k / top_p / temperature / text_split_method / text_lang
+  // - VoxCPM: cfg_value / inference_timesteps
+  // - 其他（Piper / IndexTTS 等）: 不显示高级面板
+  const providerFamily = useMemo<"gpt_sovits" | "voxcpm" | "none">(() => {
+    const cls = selectedProvider?.class_name ?? "";
+    if (cls === "GptSoVitsProvider") return "gpt_sovits";
+    if (cls === "VoxCpmCloningProvider") return "voxcpm";
+    return "none";
+  }, [selectedProvider]);
 
   const isCloning = useMemo(() => {
     if (!selectedProvider) return false;
@@ -137,13 +151,18 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
     }
     setSubmitting(true);
     try {
+      // 只把当前 Provider 家族识别的字段塞进 generation；其他保留 null
       const generation: TtsGenerationParams = {};
-      if (topK !== null) generation.top_k = topK;
-      if (topP !== null) generation.top_p = topP;
-      if (temperature !== null) generation.temperature = temperature;
-      if (textSplitMethod) generation.text_split_method = textSplitMethod;
-      if (cfgValue !== null) generation.cfg_value = cfgValue;
-      if (inferenceTimesteps !== null) generation.inference_timesteps = inferenceTimesteps;
+      if (providerFamily === "gpt_sovits") {
+        if (topK !== null) generation.top_k = topK;
+        if (topP !== null) generation.top_p = topP;
+        if (temperature !== null) generation.temperature = temperature;
+        if (textSplitMethod) generation.text_split_method = textSplitMethod;
+        if (textLang) generation.text_lang = textLang;
+      } else if (providerFamily === "voxcpm") {
+        if (cfgValue !== null) generation.cfg_value = cfgValue;
+        if (inferenceTimesteps !== null) generation.inference_timesteps = inferenceTimesteps;
+      }
       await api.post("/tts", {
         text,
         voice_id: voiceId,
@@ -271,115 +290,148 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
         </Form.Slot>
 
         {/* 高级生成参数：每次生成可调；不传走 Provider 默认。
-            折叠展示，避免常规用户看到一堆参数被吓到 */}
-        <Form.Slot label="">
-          <Text
-            link
-            onClick={() => setAdvOpen((v) => !v)}
-            style={{ cursor: "pointer" }}
-          >
-            {advOpen ? "▾ 收起高级参数" : "▸ 高级生成参数（采样 / 切分 / CFG）"}
-          </Text>
-          <Collapsible isOpen={advOpen} keepDOM>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 12,
-                marginTop: 8,
-                padding: "var(--vc-spacing-md)",
-                background: "var(--vc-color-fill-1)",
-                borderRadius: "var(--vc-radius-sm)",
-              }}
+            按当前 Provider class 动态展示——只显示该模型实际识别的字段。
+            选 Piper / IndexTTS 等不暴露 generation 参数的 Provider 时，整块隐藏。 */}
+        {providerFamily !== "none" && (
+          <Form.Slot label="">
+            <Text
+              link
+              onClick={() => setAdvOpen((v) => !v)}
+              style={{ cursor: "pointer" }}
             >
-              <div>
-                <Text type="tertiary" size="small">top_k（GPT-SoVITS）</Text>
-                <InputNumber
-                  value={topK ?? undefined}
-                  onChange={(v) => setTopK(typeof v === "number" ? v : null)}
-                  min={1}
-                  max={100}
-                  placeholder="默认 15"
-                  style={{ width: "100%" }}
-                />
+              {advOpen
+                ? "▾ 收起高级参数"
+                : providerFamily === "gpt_sovits"
+                  ? "▸ 高级生成参数（采样 / 切分 / 目标语言）"
+                  : "▸ 高级生成参数（CFG / 推理步数）"}
+            </Text>
+            <Collapsible isOpen={advOpen} keepDOM>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
+                  marginTop: 8,
+                  padding: "var(--vc-spacing-md)",
+                  background: "var(--vc-color-fill-1)",
+                  borderRadius: "var(--vc-radius-sm)",
+                }}
+              >
+                {providerFamily === "gpt_sovits" && (
+                  <>
+                    <div>
+                      <Text type="tertiary" size="small">目标语言 text_lang</Text>
+                      <Select
+                        value={textLang}
+                        onChange={(v) => setTextLang(String(v))}
+                        showClear
+                        placeholder="默认 zh"
+                        optionList={[
+                          { label: "中文 (zh)", value: "zh" },
+                          { label: "英文 (en)", value: "en" },
+                          { label: "日文 (ja)", value: "ja" },
+                          { label: "韩文 (ko)", value: "ko" },
+                          { label: "粤语 (yue)", value: "yue" },
+                          { label: "auto（多语种自动切）", value: "auto" },
+                        ]}
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                    <div>
+                      <Text type="tertiary" size="small">切分 text_split_method</Text>
+                      <Select
+                        value={textSplitMethod}
+                        onChange={(v) => setTextSplitMethod(String(v))}
+                        showClear
+                        placeholder="默认 cut5"
+                        optionList={[
+                          { label: "cut0 (不切)", value: "cut0" },
+                          { label: "cut1", value: "cut1" },
+                          { label: "cut2", value: "cut2" },
+                          { label: "cut3", value: "cut3" },
+                          { label: "cut4", value: "cut4" },
+                          { label: "cut5 (按标点)", value: "cut5" },
+                        ]}
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                    <div>
+                      <Text type="tertiary" size="small">采样 top_k</Text>
+                      <InputNumber
+                        value={topK ?? undefined}
+                        onChange={(v) => setTopK(typeof v === "number" ? v : null)}
+                        min={1}
+                        max={100}
+                        placeholder="默认 15"
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                    <div>
+                      <Text type="tertiary" size="small">采样 top_p</Text>
+                      <InputNumber
+                        value={topP ?? undefined}
+                        onChange={(v) => setTopP(typeof v === "number" ? v : null)}
+                        min={0.01}
+                        max={1}
+                        step={0.05}
+                        precision={2}
+                        placeholder="默认 1.0"
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                    <div>
+                      <Text type="tertiary" size="small">温度 temperature</Text>
+                      <InputNumber
+                        value={temperature ?? undefined}
+                        onChange={(v) =>
+                          setTemperature(typeof v === "number" ? v : null)
+                        }
+                        min={0.01}
+                        max={2}
+                        step={0.05}
+                        precision={2}
+                        placeholder="默认 1.0"
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                  </>
+                )}
+                {providerFamily === "voxcpm" && (
+                  <>
+                    <div>
+                      <Text type="tertiary" size="small">CFG 引导强度 cfg_value</Text>
+                      <InputNumber
+                        value={cfgValue ?? undefined}
+                        onChange={(v) =>
+                          setCfgValue(typeof v === "number" ? v : null)
+                        }
+                        min={0.5}
+                        max={5}
+                        step={0.1}
+                        precision={1}
+                        placeholder="默认 2.0"
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                    <div>
+                      <Text type="tertiary" size="small">推理步数 inference_timesteps</Text>
+                      <InputNumber
+                        value={inferenceTimesteps ?? undefined}
+                        onChange={(v) =>
+                          setInferenceTimesteps(typeof v === "number" ? v : null)
+                        }
+                        min={1}
+                        max={100}
+                        placeholder="默认 10"
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
-              <div>
-                <Text type="tertiary" size="small">top_p（GPT-SoVITS）</Text>
-                <InputNumber
-                  value={topP ?? undefined}
-                  onChange={(v) => setTopP(typeof v === "number" ? v : null)}
-                  min={0.01}
-                  max={1}
-                  step={0.05}
-                  precision={2}
-                  placeholder="默认 1.0"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div>
-                <Text type="tertiary" size="small">temperature（GPT-SoVITS）</Text>
-                <InputNumber
-                  value={temperature ?? undefined}
-                  onChange={(v) =>
-                    setTemperature(typeof v === "number" ? v : null)
-                  }
-                  min={0.01}
-                  max={2}
-                  step={0.05}
-                  precision={2}
-                  placeholder="默认 1.0"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div>
-                <Text type="tertiary" size="small">text_split_method（GPT-SoVITS）</Text>
-                <Select
-                  value={textSplitMethod}
-                  onChange={(v) => setTextSplitMethod(String(v))}
-                  showClear
-                  placeholder="默认 cut5"
-                  optionList={[
-                    { label: "cut0 (不切)", value: "cut0" },
-                    { label: "cut1", value: "cut1" },
-                    { label: "cut2", value: "cut2" },
-                    { label: "cut3", value: "cut3" },
-                    { label: "cut4", value: "cut4" },
-                    { label: "cut5 (按标点)", value: "cut5" },
-                  ]}
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div>
-                <Text type="tertiary" size="small">cfg_value（VoxCPM）</Text>
-                <InputNumber
-                  value={cfgValue ?? undefined}
-                  onChange={(v) =>
-                    setCfgValue(typeof v === "number" ? v : null)
-                  }
-                  min={0.5}
-                  max={5}
-                  step={0.1}
-                  precision={1}
-                  placeholder="默认 2.0"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div>
-                <Text type="tertiary" size="small">inference_timesteps（VoxCPM）</Text>
-                <InputNumber
-                  value={inferenceTimesteps ?? undefined}
-                  onChange={(v) =>
-                    setInferenceTimesteps(typeof v === "number" ? v : null)
-                  }
-                  min={1}
-                  max={100}
-                  placeholder="默认 10"
-                  style={{ width: "100%" }}
-                />
-              </div>
-            </div>
-          </Collapsible>
-        </Form.Slot>
+            </Collapsible>
+          </Form.Slot>
+        )}
       </Form>
     </TaskCreationDrawer>
   );

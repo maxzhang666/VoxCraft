@@ -450,10 +450,15 @@ class GptSoVitsProvider(CloningProvider):
         text_split_method = (
             gp.get("text_split_method") or self.config.get("text_split_method") or "cut5"
         )
+        # 目标语言：generation_params 优先（每次生成可改），fallback 默认 zh。
+        # 同一个英语参考音色，可以本次输出中文、下次输出日文，无需改 voice。
+        text_lang = (
+            gp.get("text_lang") or self.config.get("text_lang") or "zh"
+        )
 
         inputs = {
             "text": text,
-            "text_lang": "zh",  # 当前 Provider 专用于"输出中文"；后续如需多语扩展再加 config
+            "text_lang": text_lang,
             "ref_audio_path": reference_audio_path,
             "prompt_text": prompt_text,
             "prompt_lang": prompt_lang,

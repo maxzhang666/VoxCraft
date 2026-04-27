@@ -86,7 +86,13 @@ export function SystemProvider({ children }: { children: ReactNode }) {
   useSse([], onEvent);
 
   useEffect(() => {
+    // 初次拉取 + 每 10s 轮询刷新 GPU 显存等系统指标。
+    // 仅在 mount 时启动；卸载时清理 interval。10s 间隔对 /api/health
+    // （轻量 < 50ms）来说服务端压力可忽略，又能让 UI 上的"用 / 总" 数字
+    // 反映模型加载/卸载后的真实显存占用。
     refresh();
+    const id = window.setInterval(refresh, 10000);
+    return () => window.clearInterval(id);
   }, [refresh]);
 
   const value = useMemo<SystemContextValue>(

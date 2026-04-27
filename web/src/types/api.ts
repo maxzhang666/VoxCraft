@@ -129,6 +129,8 @@ export interface TtsGenerationParams {
   temperature?: number;
   /** 文本切分方式（GPT-SoVITS）：cut0/cut1/.../cut5 */
   text_split_method?: string;
+  /** 目标语言（GPT-SoVITS）：zh/en/ja/ko/yue。同一个 voice 可输出不同目标语言 */
+  text_lang?: string;
   /** CFG 引导强度（VoxCPM） */
   cfg_value?: number;
   /** 推理步数（VoxCPM） */

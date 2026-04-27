@@ -11,13 +11,17 @@ class TtsGenerationParams(BaseModel):
 
     所有字段可选——不传走 Provider 默认值。Provider 会按各自模型的范围消化：
     - VoxCPM 用 cfg_value / inference_timesteps
-    - GPT-SoVITS 用 top_k / top_p / temperature / text_split_method
+    - GPT-SoVITS 用 top_k / top_p / temperature / text_split_method / text_lang
     其他 Provider 忽略不认识的字段。
     """
     top_k: int | None = Field(None, ge=1, le=100)
     top_p: float | None = Field(None, gt=0, le=1.0)
     temperature: float | None = Field(None, gt=0, le=2.0)
     text_split_method: str | None = None  # GPT-SoVITS: cut0..cut5
+    # text_lang：生成时的目标输出语言（GPT-SoVITS 用），不传默认 "zh"。
+    # prompt_lang 不放这里——它是 voice 粒度（参考音频的语言固定），
+    # 由 worker 从 voice_refs 反查注入到 voice_metadata。
+    text_lang: str | None = None  # GPT-SoVITS: zh/en/ja/ko/yue
     cfg_value: float | None = Field(None, gt=0)             # VoxCPM
     inference_timesteps: int | None = Field(None, ge=1, le=100)  # VoxCPM
 
