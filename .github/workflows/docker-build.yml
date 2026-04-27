@@ -88,14 +88,19 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=docker
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker,mode=max' || '' }}
           provenance: false
+          # SOURCE_DATE_EPOCH=1：build 内部工具（uv/pip）尊重固定时间戳，消除
+          # wheel install metadata 漂移。这条 + Dockerfile 的 `find ... touch -h
+          # -d @0` 已经能让 layer 字节级稳定（用户实测验证 client docker pull
+          # 不再重下 3GB 层）。
+          # 之前还启用过 BuildKit `rewrite-timestamp=true` outputs——它会在
+          # export image 阶段强制重写整个 5GB image 的 layer mtime，加上
+          # cache_to mode=max 写入，让 src-only CI 从 ~3min 涨到 ~11min。
+          # 既然前两层已经够稳（用户验证），砍掉这条恢复之前的快速 build。
           build-args: |
             SOURCE_DATE_EPOCH=1
-          # outputs 替代 push: 字段；rewrite-timestamp=true 让 BuildKit 把所有
-          # layer 文件 mtime 重写为 SOURCE_DATE_EPOCH，是 reproducibility 的关键。
-          outputs: |
-            type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
