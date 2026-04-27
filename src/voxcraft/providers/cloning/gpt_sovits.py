@@ -92,6 +92,12 @@ def _i16_to_wav_bytes(audio, sample_rate: int) -> bytes:
 class GptSoVitsProvider(CloningProvider):
     LABEL = "GPT-SoVITS v2Pro（B 站，开源）"
     CAPABILITIES = frozenset({capabilities.CLONE})
+    # CONFIG_SCHEMA 只保留**模型加载参数**（一次性、跨请求稳定）。
+    # 已移除：
+    # - prompt_text / prompt_lang → voice 粒度（voice_refs，抽取声纹时填，
+    #   每个不同语种音色互不影响）
+    # - top_k / top_p / temperature / text_split_method → 生成请求粒度
+    #   （TtsRequest.generation，每次合成可调，不需改 Provider 设置）
     CONFIG_SCHEMA = [
         ConfigField(
             "model_dir", "模型目录", "path", required=True,
@@ -111,29 +117,6 @@ class GptSoVitsProvider(CloningProvider):
             "is_half", "FP16 推理", "enum",
             options=("true", "false"), default="false",
             help="GPU 启用减半显存与加速；CPU 不支持",
-        ),
-        ConfigField(
-            "prompt_text", "Prompt 文本", "str", default="",
-            help="参考音频对应的转写文字（必填）；GPT-SoVITS v2Pro 强制要求",
-        ),
-        ConfigField(
-            "prompt_lang", "Prompt 语言", "enum",
-            options=("auto", "zh", "en", "ja", "ko", "yue"), default="auto",
-            help="参考音频的语言；跨语种克隆请明确指定",
-        ),
-        ConfigField(
-            "text_split_method", "切分方式", "enum",
-            options=("cut0", "cut1", "cut2", "cut3", "cut4", "cut5"), default="cut5",
-            help="cut0=不切；cut5=按标点切（长文本必选）",
-        ),
-        ConfigField(
-            "top_k", "采样 top_k", "int", default=15,
-        ),
-        ConfigField(
-            "top_p", "采样 top_p", "str", default="1.0",
-        ),
-        ConfigField(
-            "temperature", "温度", "str", default="1.0",
         ),
     ]
 
@@ -391,6 +374,8 @@ class GptSoVitsProvider(CloningProvider):
         speed: float = 1.0,
         format: str = "wav",
         reference_audio_path: str | None = None,
+        voice_metadata: dict | None = None,
+        generation_params: dict | None = None,
     ) -> bytes:
         import numpy as np
 
@@ -409,13 +394,21 @@ class GptSoVitsProvider(CloningProvider):
                 f"GPT-SoVITS currently only emits WAV; got format={format!r}",
                 details={"provider": self.name},
             )
-        prompt_text = str(self.config.get("prompt_text") or "").strip()
+
+        # 读取优先级（从高到低）：
+        # - prompt_text/prompt_lang：voice_metadata（voice 粒度，与音频绑定）→ self.config 默认
+        # - top_k/top_p/temperature/text_split_method：generation_params（请求时覆盖）→
+        #   self.config 默认 → 硬编码默认
+        vm = voice_metadata or {}
+        gp = generation_params or {}
+        prompt_text = str(
+            vm.get("prompt_text") or self.config.get("prompt_text") or ""
+        ).strip()
         if not prompt_text:
             raise InferenceError(
-                "GPT-SoVITS v2Pro requires prompt_text (transcript of the reference audio). "
-                "Set prompt_text in this Provider's config — must match what the speaker says "
-                "in the reference WAV. Cross-lingual: also set prompt_lang to the reference "
-                "audio's language.",
+                "GPT-SoVITS requires prompt_text (transcript of the reference audio). "
+                "Set it on the voice when extracting (recommended — voice-bound), or "
+                "fallback in this Provider's config. Cross-lingual: also set prompt_lang.",
                 details={"provider": self.name},
             )
 
@@ -438,19 +431,25 @@ class GptSoVitsProvider(CloningProvider):
             )
 
         try:
-            top_k = int(self.config.get("top_k", 15))
+            top_k = int(gp.get("top_k") or self.config.get("top_k") or 15)
         except (TypeError, ValueError):
             top_k = 15
         try:
-            top_p = float(self.config.get("top_p", 1.0))
+            top_p = float(gp.get("top_p") or self.config.get("top_p") or 1.0)
         except (TypeError, ValueError):
             top_p = 1.0
         try:
-            temperature = float(self.config.get("temperature", 1.0))
+            temperature = float(
+                gp.get("temperature") or self.config.get("temperature") or 1.0
+            )
         except (TypeError, ValueError):
             temperature = 1.0
-        prompt_lang = self.config.get("prompt_lang", "auto") or "auto"
-        text_split_method = self.config.get("text_split_method", "cut5")
+        prompt_lang = (
+            vm.get("prompt_lang") or self.config.get("prompt_lang") or "auto"
+        )
+        text_split_method = (
+            gp.get("text_split_method") or self.config.get("text_split_method") or "cut5"
+        )
 
         inputs = {
             "text": text,

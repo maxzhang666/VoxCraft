@@ -113,6 +113,26 @@ export interface Voice {
   sample_url?: string | null;
   provider_name: string;
   source: "preset" | "cloned";
+  /** 仅 cloned voice：抽取时填的参考音频转写，与音色绑定 */
+  prompt_text?: string | null;
+  /** 仅 cloned voice：参考音频语言代码（zh/en/ja/ko/yue/auto） */
+  prompt_lang?: string | null;
+}
+
+/** 每次 TTS 合成可调的采样/切分参数；不传走 Provider 默认值。 */
+export interface TtsGenerationParams {
+  /** 采样 top_k（GPT-SoVITS） */
+  top_k?: number;
+  /** 采样 top_p（GPT-SoVITS） */
+  top_p?: number;
+  /** 采样温度（GPT-SoVITS） */
+  temperature?: number;
+  /** 文本切分方式（GPT-SoVITS）：cut0/cut1/.../cut5 */
+  text_split_method?: string;
+  /** CFG 引导强度（VoxCPM） */
+  cfg_value?: number;
+  /** 推理步数（VoxCPM） */
+  inference_timesteps?: number;
 }
 
 export interface SseEvent<P = Record<string, unknown>> {

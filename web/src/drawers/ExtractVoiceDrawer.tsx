@@ -3,6 +3,7 @@ import {
   Input,
   InputNumber,
   Select,
+  TextArea,
   Toast,
   Typography,
   Upload,
@@ -38,6 +39,9 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
   // 用户可改成 null 走"整段"模式（duration 字段留空即可）
   const [startSeconds, setStartSeconds] = useState<number | null>(0);
   const [durationSeconds, setDurationSeconds] = useState<number | null>(8);
+  // prompt_text/prompt_lang 与 voice 绑定（每段参考音频独有），不进 Provider 全局
+  const [promptText, setPromptText] = useState("");
+  const [promptLang, setPromptLang] = useState<string>("auto");
   const [providers, setProviders] = useState<Provider[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -52,6 +56,8 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
       setProvider("");
       setStartSeconds(0);
       setDurationSeconds(8);
+      setPromptText("");
+      setPromptLang("auto");
     }
   }, [visible]);
 
@@ -68,6 +74,8 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
         provider: provider || undefined,
         start_seconds: startSeconds ?? undefined,
         duration_seconds: durationSeconds ?? undefined,
+        prompt_text: promptText.trim() || undefined,
+        prompt_lang: promptLang || undefined,
       });
       Toast.success(`已添加音色 ${r.voice_id}`);
       onSuccess();
@@ -171,6 +179,35 @@ export function ExtractVoiceDrawer({ visible, onClose, onSuccess }: Props) {
               留空则保留整段；时长 0/空 = 不裁剪
             </Text>
           </div>
+        </Form.Slot>
+
+        <Form.Slot label="参考音频转写（GPT-SoVITS / VoxCPM 1.x 必填；与音色绑定）">
+          <TextArea
+            value={promptText}
+            onChange={setPromptText}
+            rows={2}
+            maxLength={10000}
+            placeholder="参考音频里说的那段话；建议精确转写以获得最佳克隆效果"
+          />
+          <Text type="tertiary" size="small" style={{ marginTop: 4 }}>
+            VoxCPM 2 可留空（基础克隆，不影响）；GPT-SoVITS 必填
+          </Text>
+        </Form.Slot>
+
+        <Form.Slot label="参考音频语言（GPT-SoVITS 跨语种克隆时必须明确）">
+          <Select
+            value={promptLang}
+            onChange={(v) => setPromptLang(String(v))}
+            style={{ width: "100%" }}
+            optionList={[
+              { label: "自动 (auto)", value: "auto" },
+              { label: "中文 (zh)", value: "zh" },
+              { label: "英文 (en)", value: "en" },
+              { label: "日文 (ja)", value: "ja" },
+              { label: "韩文 (ko)", value: "ko" },
+              { label: "粤语 (yue)", value: "yue" },
+            ]}
+          />
         </Form.Slot>
 
         <Form.Slot label="音色名称（可选，便于识别）">

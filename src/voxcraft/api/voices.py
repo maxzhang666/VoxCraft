@@ -58,6 +58,17 @@ async def extract_voice(
         description="可选：截取片段时长（秒）。建议 3-10 秒以匹配 VoxCPM/GPT-SoVITS 推理约束；"
         "不传则保留整段音轨",
     ),
+    prompt_text: str | None = Form(
+        None, max_length=10000,
+        description="参考音频里说的话（转写）。GPT-SoVITS / VoxCPM 1.x 强制需要；"
+        "VoxCPM 2 可选（启用时走 ultimate cloning 提升保真度）。"
+        "voice 粒度持久化，每次生成时无需再填",
+    ),
+    prompt_lang: str | None = Form(
+        None,
+        description="参考音频的语言代码（zh/en/ja/ko/yue/auto）。GPT-SoVITS 跨语种克隆"
+        "必须明确指定；VoxCPM 不使用。voice 粒度持久化",
+    ),
     session: Session = Depends(get_session),
 ) -> VoiceExtractResponse:
     ext = _ext_of(reference.filename)
@@ -114,13 +125,15 @@ async def extract_voice(
     finally:
         await asyncio.to_thread(lambda: tmp_path.unlink(missing_ok=True))
 
-    # 3. 写 voice_refs
+    # 3. 写 voice_refs（含 voice 粒度的 prompt_text + prompt_lang）
     session.add(
         VoiceRef(
             id=voice_id,
             speaker_name=speaker_name,
             reference_audio_path=str(ref_final),
             provider_name=p_row.name,
+            prompt_text=(prompt_text.strip() if prompt_text else None) or None,
+            prompt_lang=(prompt_lang.strip() if prompt_lang else None) or None,
         )
     )
     session.commit()
@@ -131,6 +144,8 @@ async def extract_voice(
         provider_name=p_row.name,
         reference_audio_path=str(ref_final),
         duration_seconds=duration,
+        prompt_text=prompt_text,
+        prompt_lang=prompt_lang,
     )
 
 

@@ -77,6 +77,11 @@ class VoiceRef(SQLModel, table=True):
     speaker_name: str | None = None
     reference_audio_path: str
     provider_name: str
+    # prompt_text/prompt_lang 与音色绑定（参考音频说什么、什么语言）；
+    # 每段参考音频独有，不能放 Provider 全局 config 里。
+    # GPT-SoVITS 强制要求；VoxCPM 1.x 也要求；VoxCPM 2 + ultimate cloning 可选。
+    prompt_text: str | None = None
+    prompt_lang: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
 

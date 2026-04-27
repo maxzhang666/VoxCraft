@@ -82,6 +82,8 @@ class IndexTtsProvider(CloningProvider):
         speed: float = 1.0,
         format: str = "wav",
         reference_audio_path: str | None = None,
+        voice_metadata: dict | None = None,  # noqa: ARG002 — 骨架未实装
+        generation_params: dict | None = None,  # noqa: ARG002 — 骨架未实装
     ) -> bytes:
         if self._model is None:
             raise InferenceError("IndexTTS not loaded")

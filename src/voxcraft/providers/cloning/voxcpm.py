@@ -66,6 +66,10 @@ def _f32_to_wav_bytes(audio, sample_rate: int) -> bytes:
 class VoxCpmCloningProvider(CloningProvider):
     LABEL = "VoxCPM（开源声纹克隆）"
     CAPABILITIES = frozenset({capabilities.CLONE})
+    # CONFIG_SCHEMA 只保留**模型加载参数**（一次性、跨请求稳定）。
+    # 已移除：
+    # - prompt_text → voice 粒度（voice_refs.prompt_text，抽取声纹时填）
+    # - cfg_value / inference_timesteps → 生成请求粒度（TtsRequest.generation，每次合成可调）
     CONFIG_SCHEMA = [
         ConfigField(
             "model_dir", "模型目录", "path", required=True,
@@ -79,18 +83,6 @@ class VoxCpmCloningProvider(CloningProvider):
             "load_denoiser", "加载降噪器", "enum",
             options=("true", "false"), default="false",
             help="增强参考音频/Prompt 时使用；常规合成留 false 节省显存",
-        ),
-        ConfigField(
-            "cfg_value", "CFG 引导强度", "str", default="2.0",
-            help="Classifier-Free Guidance 系数；建议 1.5–3.0",
-        ),
-        ConfigField(
-            "inference_timesteps", "推理步数", "int", default=10,
-            help="扩散去噪步数；增大→更精细，速度变慢",
-        ),
-        ConfigField(
-            "prompt_text", "Prompt 文本", "str", default="",
-            help="参考音频对应的转写文字。VoxCPM 1.x（0.5B）必填；VoxCPM2 可留空走基础克隆，填上则升级到 ultimate cloning 保真度更高",
         ),
     ]
 
@@ -251,6 +243,8 @@ class VoxCpmCloningProvider(CloningProvider):
         speed: float = 1.0,  # noqa: ARG002 — VoxCPM 不直接暴露 speed；后续按需 resample 实现
         format: str = "wav",
         reference_audio_path: str | None = None,
+        voice_metadata: dict | None = None,
+        generation_params: dict | None = None,
     ) -> bytes:
         if self._model is None:
             raise InferenceError(
@@ -269,15 +263,24 @@ class VoxCpmCloningProvider(CloningProvider):
                 details={"provider": self.name},
             )
 
+        # 读取优先级（从高到低）：
+        # 1. generation_params（请求时覆盖）→ 2. self.config（Provider 默认）→ 3. 硬编码默认
+        # voice_metadata.prompt_text 是 voice 粒度（参考音频对应的转写），与 voice 绑定
+        gp = generation_params or {}
+        vm = voice_metadata or {}
         try:
-            cfg_value = float(self.config.get("cfg_value", 2.0))
+            cfg_value = float(gp.get("cfg_value") or self.config.get("cfg_value") or 2.0)
         except (TypeError, ValueError):
             cfg_value = 2.0
         try:
-            inference_timesteps = int(self.config.get("inference_timesteps", 10))
+            inference_timesteps = int(
+                gp.get("inference_timesteps") or self.config.get("inference_timesteps") or 10
+            )
         except (TypeError, ValueError):
             inference_timesteps = 10
-        prompt_text = str(self.config.get("prompt_text") or "").strip()
+        prompt_text = str(
+            vm.get("prompt_text") or self.config.get("prompt_text") or ""
+        ).strip()
 
         # voxcpm 包是 facade：VoxCPM.from_pretrained 根据 config.json 的 architecture
         # 字段加载 VoxCPMModel (v1, 如 VoxCPM-0.5B) 或 VoxCPM2Model (v2)。

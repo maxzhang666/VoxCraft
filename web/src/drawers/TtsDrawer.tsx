@@ -1,4 +1,14 @@
-import { Form, Radio, Select, Slider, TextArea, Toast, Typography } from "@douyinfe/semi-ui";
+import {
+  Collapsible,
+  Form,
+  InputNumber,
+  Radio,
+  Select,
+  Slider,
+  TextArea,
+  Toast,
+  Typography,
+} from "@douyinfe/semi-ui";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -6,7 +16,12 @@ import { api } from "@/api/client";
 import { listProviderClasses, listProviders } from "@/api/providers";
 import { listVoices } from "@/api/voices";
 import { TaskCreationDrawer } from "@/components/TaskCreationDrawer";
-import type { Provider, ProviderClassSchema, Voice } from "@/types/api";
+import type {
+  Provider,
+  ProviderClassSchema,
+  TtsGenerationParams,
+  Voice,
+} from "@/types/api";
 
 const { Text } = Typography;
 
@@ -27,6 +42,14 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
   const [classes, setClasses] = useState<ProviderClassSchema[]>([]);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  // 高级生成参数（每次生成可调，不传走 Provider 默认）
+  const [advOpen, setAdvOpen] = useState(false);
+  const [topK, setTopK] = useState<number | null>(null);
+  const [topP, setTopP] = useState<number | null>(null);
+  const [temperature, setTemperature] = useState<number | null>(null);
+  const [textSplitMethod, setTextSplitMethod] = useState<string>("");
+  const [cfgValue, setCfgValue] = useState<number | null>(null);
+  const [inferenceTimesteps, setInferenceTimesteps] = useState<number | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -54,6 +77,13 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
       setSpeed(1.0);
       setFormat("wav");
       setProviderName("");
+      setAdvOpen(false);
+      setTopK(null);
+      setTopP(null);
+      setTemperature(null);
+      setTextSplitMethod("");
+      setCfgValue(null);
+      setInferenceTimesteps(null);
     }
   }, [visible]);
 
@@ -107,12 +137,20 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
     }
     setSubmitting(true);
     try {
+      const generation: TtsGenerationParams = {};
+      if (topK !== null) generation.top_k = topK;
+      if (topP !== null) generation.top_p = topP;
+      if (temperature !== null) generation.temperature = temperature;
+      if (textSplitMethod) generation.text_split_method = textSplitMethod;
+      if (cfgValue !== null) generation.cfg_value = cfgValue;
+      if (inferenceTimesteps !== null) generation.inference_timesteps = inferenceTimesteps;
       await api.post("/tts", {
         text,
         voice_id: voiceId,
         speed,
         format,
         provider: providerName,
+        generation: Object.keys(generation).length > 0 ? generation : undefined,
       });
       Toast.info("已加入队列");
       onSuccess();
@@ -230,6 +268,117 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
             <Radio value="mp3">MP3</Radio>
             <Radio value="ogg">OGG</Radio>
           </Radio.Group>
+        </Form.Slot>
+
+        {/* 高级生成参数：每次生成可调；不传走 Provider 默认。
+            折叠展示，避免常规用户看到一堆参数被吓到 */}
+        <Form.Slot label="">
+          <Text
+            link
+            onClick={() => setAdvOpen((v) => !v)}
+            style={{ cursor: "pointer" }}
+          >
+            {advOpen ? "▾ 收起高级参数" : "▸ 高级生成参数（采样 / 切分 / CFG）"}
+          </Text>
+          <Collapsible isOpen={advOpen} keepDOM>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+                marginTop: 8,
+                padding: "var(--vc-spacing-md)",
+                background: "var(--vc-color-fill-1)",
+                borderRadius: "var(--vc-radius-sm)",
+              }}
+            >
+              <div>
+                <Text type="tertiary" size="small">top_k（GPT-SoVITS）</Text>
+                <InputNumber
+                  value={topK ?? undefined}
+                  onChange={(v) => setTopK(typeof v === "number" ? v : null)}
+                  min={1}
+                  max={100}
+                  placeholder="默认 15"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <Text type="tertiary" size="small">top_p（GPT-SoVITS）</Text>
+                <InputNumber
+                  value={topP ?? undefined}
+                  onChange={(v) => setTopP(typeof v === "number" ? v : null)}
+                  min={0.01}
+                  max={1}
+                  step={0.05}
+                  precision={2}
+                  placeholder="默认 1.0"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <Text type="tertiary" size="small">temperature（GPT-SoVITS）</Text>
+                <InputNumber
+                  value={temperature ?? undefined}
+                  onChange={(v) =>
+                    setTemperature(typeof v === "number" ? v : null)
+                  }
+                  min={0.01}
+                  max={2}
+                  step={0.05}
+                  precision={2}
+                  placeholder="默认 1.0"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <Text type="tertiary" size="small">text_split_method（GPT-SoVITS）</Text>
+                <Select
+                  value={textSplitMethod}
+                  onChange={(v) => setTextSplitMethod(String(v))}
+                  showClear
+                  placeholder="默认 cut5"
+                  optionList={[
+                    { label: "cut0 (不切)", value: "cut0" },
+                    { label: "cut1", value: "cut1" },
+                    { label: "cut2", value: "cut2" },
+                    { label: "cut3", value: "cut3" },
+                    { label: "cut4", value: "cut4" },
+                    { label: "cut5 (按标点)", value: "cut5" },
+                  ]}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <Text type="tertiary" size="small">cfg_value（VoxCPM）</Text>
+                <InputNumber
+                  value={cfgValue ?? undefined}
+                  onChange={(v) =>
+                    setCfgValue(typeof v === "number" ? v : null)
+                  }
+                  min={0.5}
+                  max={5}
+                  step={0.1}
+                  precision={1}
+                  placeholder="默认 2.0"
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <Text type="tertiary" size="small">inference_timesteps（VoxCPM）</Text>
+                <InputNumber
+                  value={inferenceTimesteps ?? undefined}
+                  onChange={(v) =>
+                    setInferenceTimesteps(typeof v === "number" ? v : null)
+                  }
+                  min={1}
+                  max={100}
+                  placeholder="默认 10"
+                  style={{ width: "100%" }}
+                />
+              </div>
+            </div>
+          </Collapsible>
         </Form.Slot>
       </Form>
     </TaskCreationDrawer>

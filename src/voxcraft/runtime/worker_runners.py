@@ -199,10 +199,11 @@ def _run_asr(req: JobRequest, inst, emit: EmitFn | None) -> JobResult:
     )
 
 
-def _lookup_voice_ref_path(voice_id: str) -> str | None:
-    """voice_id → voice_refs.reference_audio_path；不存在或非 vx_ 前缀返回 None。
+def _lookup_voice_metadata(voice_id: str) -> dict | None:
+    """voice_id → voice_refs 完整元数据：reference_audio_path / prompt_text /
+    prompt_lang / speaker_name。zero-shot 克隆 Provider 用，其他 Provider 忽略。
 
-    Zero-shot 克隆 Provider（VoxCPM 等）合成时需要参考音频；其他 Provider 忽略。
+    返回 None 时（voice_id 非 vx_ 前缀或不存在）走 Provider 默认音色路径。
     """
     if not voice_id or not voice_id.startswith("vx_"):
         return None
@@ -212,7 +213,14 @@ def _lookup_voice_ref_path(voice_id: str) -> str | None:
 
     with Session(get_engine()) as s:
         row = s.get(VoiceRef, voice_id)
-    return row.reference_audio_path if row else None
+    if row is None:
+        return None
+    return {
+        "reference_audio_path": row.reference_audio_path,
+        "prompt_text": row.prompt_text,
+        "prompt_lang": row.prompt_lang,
+        "speaker_name": row.speaker_name,
+    }
 
 
 def _run_tts(req: JobRequest, inst) -> JobResult:
@@ -222,10 +230,13 @@ def _run_tts(req: JobRequest, inst) -> JobResult:
     voice_id = meta["voice_id"]
     speed = meta.get("speed", 1.0)
     fmt = meta.get("format", "wav")
-    ref_path = _lookup_voice_ref_path(voice_id)
+    voice_meta = _lookup_voice_metadata(voice_id)
+    generation = meta.get("generation") or {}
     audio = inst.synthesize(
         text, voice_id=voice_id, speed=speed, format=fmt,
-        reference_audio_path=ref_path,
+        reference_audio_path=voice_meta["reference_audio_path"] if voice_meta else None,
+        voice_metadata=voice_meta,
+        generation_params=generation,
     )
 
     suffix = {"wav": ".wav", "mp3": ".mp3", "ogg": ".ogg"}[fmt]

@@ -76,6 +76,8 @@ class PiperProvider(TtsProvider):
         speed: float = 1.0,
         format: str = "wav",
         reference_audio_path: str | None = None,  # noqa: ARG002 — Piper 是预设音色，参考音频无意义
+        voice_metadata: dict | None = None,  # noqa: ARG002 — Piper 不需要
+        generation_params: dict | None = None,  # noqa: ARG002 — Piper 不暴露采样参数
     ) -> bytes:
         if self._voice is None:
             raise InferenceError(
