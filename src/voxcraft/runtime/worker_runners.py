@@ -243,7 +243,12 @@ def _run_tts(req: JobRequest, inst) -> JobResult:
     out = Path(req.output_dir) / f"{req.job_id}{suffix}"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(audio)
-    return JobResult(ok=True, output_path=str(out))
+    # Provider 实现可在 synthesize 内填充 last_synthesis_debug（resolved 后的实际
+    # 输入 + 来源归属 + 音频时长 等）。worker 把它塞进 JobResult.result，前端任务
+    # 详情的 JsonViewer 会原样展示，便于诊断"prompt_text 究竟从哪来"这类配置漂移问题
+    debug = getattr(inst, "last_synthesis_debug", None)
+    result_dict = {"synthesis_debug": debug} if debug else None
+    return JobResult(ok=True, output_path=str(out), result=result_dict)
 
 
 def _run_clone(req: JobRequest, inst) -> JobResult:

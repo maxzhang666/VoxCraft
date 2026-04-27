@@ -395,22 +395,74 @@ class GptSoVitsProvider(CloningProvider):
                 details={"provider": self.name},
             )
 
-        # 读取优先级（从高到低）：
-        # - prompt_text/prompt_lang：voice_metadata（voice 粒度，与音频绑定）→ self.config 默认
-        # - top_k/top_p/temperature/text_split_method：generation_params（请求时覆盖）→
-        #   self.config 默认 → 硬编码默认
+        # 重置上一次的调试元数据，避免上次 synthesize 的残留误导本次任务详情
+        self.last_synthesis_debug = None
+
         vm = voice_metadata or {}
         gp = generation_params or {}
-        prompt_text = str(
-            vm.get("prompt_text") or self.config.get("prompt_text") or ""
-        ).strip()
+
+        # 三级优先级解析：每个字段返回 (value, source) 元组。source 标签直接进
+        # last_synthesis_debug，让任务详情能回答"prompt_text 究竟是从 voice 来的、
+        # 还是从 Provider config 兜底来的、还是用了硬编码 default"——这是定位
+        # "stale config 偷偷污染请求"问题的关键证据。
+        def _pick(field: str, *layers: tuple[str, dict | None], default=None) -> tuple[object, str]:
+            for source, src_dict in layers:
+                if src_dict is None:
+                    continue
+                v = src_dict.get(field)
+                if v not in (None, ""):
+                    return v, source
+            return default, "default"
+
+        prompt_text_raw, prompt_text_src = _pick(
+            "prompt_text",
+            ("voice_metadata", vm),
+            ("provider_config", self.config),  # 已搬走的 stale fallback；保留是为了让
+            #                                    debug 记录显式标出"这是从 stale config
+            #                                    来的"，便于诊断是不是踩了这个坑
+        )
+        prompt_text = str(prompt_text_raw or "").strip()
         if not prompt_text:
             raise InferenceError(
                 "GPT-SoVITS requires prompt_text (transcript of the reference audio). "
-                "Set it on the voice when extracting (recommended — voice-bound), or "
-                "fallback in this Provider's config. Cross-lingual: also set prompt_lang.",
-                details={"provider": self.name},
+                "Set it on the voice when extracting (recommended — voice-bound). "
+                "Cross-lingual: also set prompt_lang.",
+                details={"provider": self.name, "voice_metadata_keys": list(vm.keys())},
             )
+
+        prompt_lang, prompt_lang_src = _pick(
+            "prompt_lang",
+            ("generation_params", gp),
+            ("voice_metadata", vm),
+            ("provider_config", self.config),
+            default="auto",
+        )
+        text_lang, text_lang_src = _pick(
+            "text_lang",
+            ("generation_params", gp),
+            ("provider_config", self.config),
+            default="zh",
+        )
+        text_split_method, text_split_method_src = _pick(
+            "text_split_method",
+            ("generation_params", gp),
+            ("provider_config", self.config),
+            default="cut5",
+        )
+
+        def _pick_num(field: str, cast, default):
+            raw, src = _pick(
+                field, ("generation_params", gp), ("provider_config", self.config),
+                default=default,
+            )
+            try:
+                return cast(raw), src
+            except (TypeError, ValueError):
+                return default, "default"
+
+        top_k, top_k_src = _pick_num("top_k", int, 15)
+        top_p, top_p_src = _pick_num("top_p", float, 1.0)
+        temperature, temperature_src = _pick_num("temperature", float, 1.0)
 
         # GPT-SoVITS 内部限制参考音频时长 3-10 秒；提前预检避免推理深栈才报错
         try:
@@ -430,37 +482,6 @@ class GptSoVitsProvider(CloningProvider):
                 },
             )
 
-        try:
-            top_k = int(gp.get("top_k") or self.config.get("top_k") or 15)
-        except (TypeError, ValueError):
-            top_k = 15
-        try:
-            top_p = float(gp.get("top_p") or self.config.get("top_p") or 1.0)
-        except (TypeError, ValueError):
-            top_p = 1.0
-        try:
-            temperature = float(
-                gp.get("temperature") or self.config.get("temperature") or 1.0
-            )
-        except (TypeError, ValueError):
-            temperature = 1.0
-        # prompt_lang 三层覆盖：generation_params（请求时调试覆盖）→
-        # voice_metadata（voice 抽取时设的默认）→ config → "auto"
-        prompt_lang = (
-            gp.get("prompt_lang")
-            or vm.get("prompt_lang")
-            or self.config.get("prompt_lang")
-            or "auto"
-        )
-        text_split_method = (
-            gp.get("text_split_method") or self.config.get("text_split_method") or "cut5"
-        )
-        # 目标语言：generation_params 优先（每次生成可改），fallback 默认 zh。
-        # 同一个英语参考音色，可以本次输出中文、下次输出日文，无需改 voice。
-        text_lang = (
-            gp.get("text_lang") or self.config.get("text_lang") or "zh"
-        )
-
         inputs = {
             "text": text,
             "text_lang": text_lang,
@@ -474,6 +495,38 @@ class GptSoVitsProvider(CloningProvider):
             "speed_factor": float(speed),
             "return_fragment": False,
             "streaming_mode": False,
+        }
+
+        # voice_metadata 在 last_synthesis_debug 里只快照"已知会影响推理"的字段，
+        # 不直接 dump 全部（避免把 absolute path 等运维信息泄露给前端）
+        vm_snapshot = {
+            "prompt_text": vm.get("prompt_text"),
+            "prompt_lang": vm.get("prompt_lang"),
+            "speaker_name": vm.get("speaker_name"),
+            "reference_audio_path": vm.get("reference_audio_path"),
+        } if vm else None
+        # provider_config 里"非加载相关"的 stale 字段——只要存在就单独列出，
+        # 让用户一眼看到 Provider config 是不是带着已搬走的旧字段在污染请求
+        stale_keys = (
+            "prompt_text", "prompt_lang", "top_k", "top_p", "temperature",
+            "text_split_method", "text_lang",
+        )
+        stale_provider_config = {
+            k: self.config[k] for k in stale_keys if k in self.config
+        }
+        # 字段来源归属一览：每行 (final_value, where_it_came_from)，
+        # source ∈ {generation_params, voice_metadata, provider_config, default}
+        resolved = {
+            "prompt_text": {"value": prompt_text, "source": prompt_text_src},
+            "prompt_lang": {"value": prompt_lang, "source": prompt_lang_src},
+            "text_lang": {"value": text_lang, "source": text_lang_src},
+            "text_split_method": {
+                "value": text_split_method, "source": text_split_method_src,
+            },
+            "top_k": {"value": top_k, "source": top_k_src},
+            "top_p": {"value": top_p, "source": top_p_src},
+            "temperature": {"value": temperature, "source": temperature_src},
+            "speed_factor": {"value": float(speed), "source": "request"},
         }
 
         try:
@@ -495,6 +548,49 @@ class GptSoVitsProvider(CloningProvider):
                 f"GPT-SoVITS synthesis failed: {e}",
                 details={"provider": self.name, "reference": reference_audio_path},
             ) from e
+
+        audio_duration_s = round(len(audio) / sr, 3) if sr else None
+        # 写调试快照——success 路径才写；失败已 raise InferenceError
+        self.last_synthesis_debug = {
+            "provider_class": "GptSoVitsProvider",
+            "version": self.config.get("version", "v2Pro"),
+            "resolved_inputs": resolved,
+            "voice_metadata": vm_snapshot,
+            "stale_provider_config": stale_provider_config or None,
+            "reference_audio": {
+                "path": reference_audio_path,
+                "duration_s": round(ref_duration, 3) if ref_duration is not None else None,
+            },
+            "output_audio": {
+                "duration_s": audio_duration_s,
+                "sample_rate": sr,
+                "chunk_count": len(chunks),
+                "samples": int(len(audio)),
+            },
+            "text_input": {
+                "text": text,
+                "text_length_chars": len(text),
+                "ends_with_punct": bool(text) and text[-1] in "，。？！,.?!~:：—…",
+            },
+        }
+        # 同步落结构化日志，容器日志里也能直接 grep
+        log.info(
+            "gpt_sovits.synthesize.done",
+            provider=self.name,
+            text_chars=len(text),
+            text_lang=text_lang,
+            prompt_lang=prompt_lang,
+            prompt_text_source=prompt_text_src,
+            prompt_lang_source=prompt_lang_src,
+            text_split_method=text_split_method,
+            top_k=top_k,
+            top_p=top_p,
+            temperature=temperature,
+            ref_duration_s=ref_duration,
+            audio_duration_s=audio_duration_s,
+            sample_rate=sr,
+            stale_provider_config_keys=sorted(stale_provider_config.keys()) or None,
+        )
 
         return _i16_to_wav_bytes(audio, sr)
 

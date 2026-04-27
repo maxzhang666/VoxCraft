@@ -124,6 +124,14 @@ class AsrProvider(Provider):
 class TtsProvider(Provider):
     kind: ClassVar[str] = "tts"
 
+    def __init__(self, name: str, config: dict) -> None:
+        super().__init__(name, config)
+        # 最近一次 synthesize 的可观测元数据：resolved 后的实际输入（含来源归属）+
+        # 参考音频时长 + 输出音频时长 + sample rate 等。Provider 实现按需填，
+        # worker 读出后合入 JobResult.result["synthesis_debug"]，前端任务详情直接展示。
+        # 不填即 None；老 Provider 不破坏。
+        self.last_synthesis_debug: dict | None = None
+
     @abstractmethod
     def synthesize(
         self,
