@@ -74,6 +74,21 @@ def list_provider_classes(kind: str | None = None) -> list[ProviderClassSchema]:
     return out
 
 
+def _whitelist_config(class_name: str, raw: dict | None) -> dict:
+    """按 Provider 类的 CONFIG_SCHEMA 过滤 config，丢弃未声明的 key。
+
+    背景：曾经把 prompt_text/prompt_lang/采样参数等都写在 Provider config 里，
+    后来重构搬走但 DB 行原值仍在；只要任何一个 Provider config 残留旧 key，
+    Provider 实现里的 self.config.get(...) 兜底链就会偷偷拿 stale 值污染请求。
+    在保存路径上加白名单（CONFIG_SCHEMA 是真相源），从根上断绝再次被污染的可能。
+    """
+    cls = PROVIDER_REGISTRY.get(class_name)
+    if cls is None or not raw:
+        return raw or {}
+    allowed = {f.key for f in getattr(cls, "CONFIG_SCHEMA", [])}
+    return {k: v for k, v in raw.items() if k in allowed}
+
+
 @router.post("", response_model=ProviderResponse, status_code=201)
 def create_provider(
     data: ProviderCreate, session: Session = Depends(get_session)
@@ -84,7 +99,9 @@ def create_provider(
             code="PROVIDER_UNKNOWN",
             status_code=400,
         )
-    p = Provider(**data.model_dump())
+    payload = data.model_dump()
+    payload["config"] = _whitelist_config(data.class_name, payload.get("config"))
+    p = Provider(**payload)
     session.add(p)
     try:
         session.commit()
@@ -107,7 +124,10 @@ def update_provider(
     p = session.get(Provider, id)
     if p is None:
         raise _not_found(id)
-    for k, v in data.model_dump(exclude_unset=True).items():
+    payload = data.model_dump(exclude_unset=True)
+    if "config" in payload:
+        payload["config"] = _whitelist_config(p.class_name, payload["config"])
+    for k, v in payload.items():
         setattr(p, k, v)
     session.commit()
     session.refresh(p)

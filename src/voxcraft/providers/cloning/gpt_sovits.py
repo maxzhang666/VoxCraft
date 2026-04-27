@@ -21,7 +21,9 @@ import 注意：
   当用户传的绝对路径有任一不存在时会回退到这些相对路径，找不到资源会硬崩。
   load() 切到 /opt/GPT-SoVITS 让 fallback 能解析（但优先确保用户路径都存在）。
 - v2Pro 必填 prompt_text + prompt_lang（v3/v4 同；v2/v2 ref_free 模式质量差不暴露）。
-  Provider 沿用 prompt_text 全局配置（与 voxcpm v1 模式一致），后续可改 voice 粒度。
+  这两值是"参考音频里说了什么 + 什么语种"的事实，与 voice 抽象无关——抽取声纹时
+  由 ASR 自动检测落 audio_transcripts 缓存（key=audio_path），worker 反查注入
+  voice_metadata。Provider config 不再持有这些字段（避免 stale 值污染请求）。
 """
 from __future__ import annotations
 
@@ -92,10 +94,12 @@ def _i16_to_wav_bytes(audio, sample_rate: int) -> bytes:
 class GptSoVitsProvider(CloningProvider):
     LABEL = "GPT-SoVITS v2Pro（B 站，开源）"
     CAPABILITIES = frozenset({capabilities.CLONE})
-    # CONFIG_SCHEMA 只保留**模型加载参数**（一次性、跨请求稳定）。
-    # 已移除：
-    # - prompt_text / prompt_lang → voice 粒度（voice_refs，抽取声纹时填，
-    #   每个不同语种音色互不影响）
+    # CONFIG_SCHEMA 只保留**模型加载参数**（一次性、跨请求稳定）。Provider 创建/
+    # 更新端点会按这个 schema 白名单过滤 config（admin.py:_whitelist_config），从根
+    # 杜绝旧字段残留污染请求。
+    # 已搬走：
+    # - prompt_text / prompt_lang → audio_transcripts 缓存（按 audio_path 索引），
+    #   抽取声纹时 ASR 自动落库；worker 反查注入 voice_metadata
     # - top_k / top_p / temperature / text_split_method → 生成请求粒度
     #   （TtsRequest.generation，每次合成可调，不需改 Provider 设置）
     CONFIG_SCHEMA = [
@@ -401,10 +405,13 @@ class GptSoVitsProvider(CloningProvider):
         vm = voice_metadata or {}
         gp = generation_params or {}
 
-        # 三级优先级解析：每个字段返回 (value, source) 元组。source 标签直接进
-        # last_synthesis_debug，让任务详情能回答"prompt_text 究竟是从 voice 来的、
-        # 还是从 Provider config 兜底来的、还是用了硬编码 default"——这是定位
-        # "stale config 偷偷污染请求"问题的关键证据。
+        # 字段来源原则（从根上断"Provider config stale 字段偷偷污染请求"的可能）：
+        # - prompt_text / prompt_lang：仅来自 voice_metadata（worker 从 audio_transcripts
+        #   缓存注入；ASR 在抽取声纹时自动跑）。Provider config 不再参与。
+        # - 采样 / 切分 / 目标语言：仅来自 generation_params（每次请求显式给）+ 硬编码
+        #   default。Provider config 不再参与。
+        # 这样 self.config 里只剩 model_dir / version / device / is_half——
+        # 即 CONFIG_SCHEMA 声明的纯加载参数。
         def _pick(field: str, *layers: tuple[str, dict | None], default=None) -> tuple[object, str]:
             for source, src_dict in layers:
                 if src_dict is None:
@@ -415,46 +422,37 @@ class GptSoVitsProvider(CloningProvider):
             return default, "default"
 
         prompt_text_raw, prompt_text_src = _pick(
-            "prompt_text",
-            ("voice_metadata", vm),
-            ("provider_config", self.config),  # 已搬走的 stale fallback；保留是为了让
-            #                                    debug 记录显式标出"这是从 stale config
-            #                                    来的"，便于诊断是不是踩了这个坑
+            "prompt_text", ("voice_metadata", vm),
         )
         prompt_text = str(prompt_text_raw or "").strip()
         if not prompt_text:
             raise InferenceError(
-                "GPT-SoVITS requires prompt_text (transcript of the reference audio). "
-                "Set it on the voice when extracting (recommended — voice-bound). "
-                "Cross-lingual: also set prompt_lang.",
-                details={"provider": self.name, "voice_metadata_keys": list(vm.keys())},
+                "GPT-SoVITS requires the reference audio transcript, but none is "
+                "cached for this voice (audio_transcripts row missing). "
+                "Likely cause: no default ASR Provider was configured when the voice "
+                "was extracted. Configure an ASR Provider, then delete and re-extract "
+                "the voice — extraction auto-transcribes via ASR and caches the result.",
+                details={
+                    "provider": self.name,
+                    "reference": reference_audio_path,
+                    "voice_metadata_keys": list(vm.keys()),
+                },
             )
 
+        # prompt_lang 与 prompt_text 同源：ASR 检测的语种（写在 audio_transcripts.language）。
+        # 缓存里没有就退到 "auto"——GPT-SoVITS 内部会再做一次粗检测；不会回到 Provider config。
         prompt_lang, prompt_lang_src = _pick(
-            "prompt_lang",
-            ("generation_params", gp),
-            ("voice_metadata", vm),
-            ("provider_config", self.config),
-            default="auto",
+            "prompt_lang", ("voice_metadata", vm), default="auto",
         )
         text_lang, text_lang_src = _pick(
-            "text_lang",
-            ("generation_params", gp),
-            ("provider_config", self.config),
-            default="zh",
+            "text_lang", ("generation_params", gp), default="zh",
         )
         text_split_method, text_split_method_src = _pick(
-            "text_split_method",
-            ("generation_params", gp),
-            ("provider_config", self.config),
-            default="cut5",
+            "text_split_method", ("generation_params", gp), default="cut5",
         )
 
         def _pick_num(field: str, cast, default):
-            raw, src = _pick(
-                field, ("generation_params", gp), ("provider_config", self.config),
-                default=default,
-            )
+            raw, src = _pick(field, ("generation_params", gp), default=default)
             try:
                 return cast(raw), src
             except (TypeError, ValueError):
@@ -504,18 +502,11 @@ class GptSoVitsProvider(CloningProvider):
             "prompt_lang": vm.get("prompt_lang"),
             "speaker_name": vm.get("speaker_name"),
             "reference_audio_path": vm.get("reference_audio_path"),
+            "transcript_source": vm.get("transcript_source"),
         } if vm else None
-        # provider_config 里"非加载相关"的 stale 字段——只要存在就单独列出，
-        # 让用户一眼看到 Provider config 是不是带着已搬走的旧字段在污染请求
-        stale_keys = (
-            "prompt_text", "prompt_lang", "top_k", "top_p", "temperature",
-            "text_split_method", "text_lang",
-        )
-        stale_provider_config = {
-            k: self.config[k] for k in stale_keys if k in self.config
-        }
         # 字段来源归属一览：每行 (final_value, where_it_came_from)，
-        # source ∈ {generation_params, voice_metadata, provider_config, default}
+        # source ∈ {generation_params, voice_metadata, default}
+        # （provider_config 已被显式断开为兜底来源——见 _pick 调用处的注释）
         resolved = {
             "prompt_text": {"value": prompt_text, "source": prompt_text_src},
             "prompt_lang": {"value": prompt_lang, "source": prompt_lang_src},
@@ -556,7 +547,6 @@ class GptSoVitsProvider(CloningProvider):
             "version": self.config.get("version", "v2Pro"),
             "resolved_inputs": resolved,
             "voice_metadata": vm_snapshot,
-            "stale_provider_config": stale_provider_config or None,
             "reference_audio": {
                 "path": reference_audio_path,
                 "duration_s": round(ref_duration, 3) if ref_duration is not None else None,
@@ -589,7 +579,6 @@ class GptSoVitsProvider(CloningProvider):
             ref_duration_s=ref_duration,
             audio_duration_s=audio_duration_s,
             sample_rate=sr,
-            stale_provider_config_keys=sorted(stale_provider_config.keys()) or None,
         )
 
         return _i16_to_wav_bytes(audio, sr)

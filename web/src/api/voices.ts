@@ -7,8 +7,14 @@ export interface VoiceExtractResponse {
   provider_name: string;
   reference_audio_path: string;
   duration_seconds: number | null;
-  prompt_text?: string | null;
-  prompt_lang?: string | null;
+  /** 后端是否成功用 ASR 自动转写参考音频 */
+  transcribed: boolean;
+  /** 转写文本预览（最多 200 字符）；仅用于让用户确认结果对不对 */
+  transcript_preview: string | null;
+  /** ASR 检测到的参考音频语种（zh/en/ja/...） */
+  transcript_language: string | null;
+  /** 未配置 ASR / ASR 失败时的告警文案；前端 Toast 提示用 */
+  transcribe_warning: string | null;
 }
 
 export interface ExtractVoiceParams {
@@ -19,10 +25,6 @@ export interface ExtractVoiceParams {
   start_seconds?: number;
   /** 可选：声纹片段时长（秒）。建议 3-10s 匹配 VoxCPM / GPT-SoVITS 推理约束 */
   duration_seconds?: number;
-  /** 参考音频说的话（转写）。GPT-SoVITS / VoxCPM 1.x 必填；voice 粒度持久化 */
-  prompt_text?: string;
-  /** 参考音频语言（zh/en/ja/ko/yue/auto）；GPT-SoVITS 跨语种克隆必需 */
-  prompt_lang?: string;
 }
 
 export const listVoices = () =>
@@ -39,8 +41,6 @@ export const extractVoice = (params: ExtractVoiceParams) => {
   if (params.duration_seconds !== undefined) {
     fd.append("duration_seconds", String(params.duration_seconds));
   }
-  if (params.prompt_text) fd.append("prompt_text", params.prompt_text);
-  if (params.prompt_lang) fd.append("prompt_lang", params.prompt_lang);
   return api
     .post<VoiceExtractResponse>("/tts/voices/extract", fd)
     .then((r) => r.data);

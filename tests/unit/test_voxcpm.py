@@ -104,24 +104,21 @@ def test_synthesize_requires_reference_audio(mock_voxcpm):
 
 
 def test_synthesize_passes_kwargs_and_returns_wav(mock_voxcpm):
-    p = VoxCpmCloningProvider(
-        name="vox",
-        config={
-            "model_dir": "/x",
-            "cfg_value": "1.5",
-            "inference_timesteps": 8,
-            "prompt_text": "你好世界",
-        },
-    )
+    """generation_params 是采样参数的唯一来源；prompt_text 来自 voice_metadata
+    （worker 从 audio_transcripts 缓存注入）。Provider config 不再参与兜底。"""
+    p = VoxCpmCloningProvider(name="vox", config={"model_dir": "/x"})
     p.load()
     out = p.synthesize(
         "测试文本", voice_id="vx_xxx", reference_audio_path="/data/voices/vx_xxx.wav",
+        voice_metadata={
+            "reference_audio_path": "/data/voices/vx_xxx.wav",
+            "prompt_text": "你好世界",
+        },
+        generation_params={"cfg_value": 1.5, "inference_timesteps": 8},
     )
-    # 返回 WAV bytes（RIFF header）
     assert isinstance(out, bytes)
     assert out.startswith(b"RIFF")
 
-    # 调用参数透传
     kw = mock_voxcpm["generate_kwargs"]
     assert kw["text"] == "测试文本"
     assert kw["prompt_wav_path"] == "/data/voices/vx_xxx.wav"
@@ -130,14 +127,36 @@ def test_synthesize_passes_kwargs_and_returns_wav(mock_voxcpm):
     assert kw["prompt_text"] == "你好世界"
 
 
+def test_synthesize_ignores_stale_provider_config(mock_voxcpm):
+    """Provider config 里残留的 stale prompt_text/cfg_value 不应污染请求——
+    voice 没 prompt_text 时 v1 应直接 fail-fast，而不是用 stale 值兜底。"""
+    p = VoxCpmCloningProvider(
+        name="vox",
+        config={
+            "model_dir": "/x",
+            "prompt_text": "stale_value_from_old_config",
+            "cfg_value": 99.0,
+            "inference_timesteps": 1,
+        },
+    )
+    p.load()
+    with pytest.raises(InferenceError) as exc:
+        p.synthesize(
+            "hi", voice_id="vx_x", reference_audio_path="/r.wav",
+            voice_metadata={"reference_audio_path": "/r.wav"},
+        )
+    assert "transcript" in exc.value.message.lower()
+
+
 def test_synthesize_v1_without_prompt_text_raises(mock_voxcpm):
     """VoxCPM 1.x（0.5B）的克隆路径要求 prompt_wav_path + prompt_text 同传；
-    缺转写文字时 voxcpm 自身会抛配对错误，provider 在调用前就显式拦截给清晰提示。"""
+    voice_metadata 没 prompt_text → fail-fast 给清晰提示（提醒配置 ASR + 重抽 voice）。"""
     p = VoxCpmCloningProvider(name="vox", config={"model_dir": "/x"})
     p.load()
     with pytest.raises(InferenceError) as exc:
         p.synthesize("hi", voice_id="vx_x", reference_audio_path="/r.wav")
-    assert "transcript" in exc.value.message.lower()
+    msg = exc.value.message.lower()
+    assert "transcript" in msg
 
 
 def test_synthesize_v2_basic_clone_uses_reference_wav_path(mock_voxcpm_v2):
@@ -152,13 +171,16 @@ def test_synthesize_v2_basic_clone_uses_reference_wav_path(mock_voxcpm_v2):
 
 
 def test_synthesize_v2_with_prompt_text_does_ultimate_cloning(mock_voxcpm_v2):
-    """v2 + prompt_text → 三参数同传走 ultimate cloning。"""
-    p = VoxCpmCloningProvider(
-        name="vox",
-        config={"model_dir": "/x", "prompt_text": "参考音频里讲的话"},
-    )
+    """v2 + voice_metadata.prompt_text → 三参数同传走 ultimate cloning。"""
+    p = VoxCpmCloningProvider(name="vox", config={"model_dir": "/x"})
     p.load()
-    p.synthesize("hi", voice_id="vx_x", reference_audio_path="/r.wav")
+    p.synthesize(
+        "hi", voice_id="vx_x", reference_audio_path="/r.wav",
+        voice_metadata={
+            "reference_audio_path": "/r.wav",
+            "prompt_text": "参考音频里讲的话",
+        },
+    )
     kw = mock_voxcpm_v2["generate_kwargs"]
     assert kw["prompt_wav_path"] == "/r.wav"
     assert kw["prompt_text"] == "参考音频里讲的话"

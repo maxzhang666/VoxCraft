@@ -66,9 +66,12 @@ def _f32_to_wav_bytes(audio, sample_rate: int) -> bytes:
 class VoxCpmCloningProvider(CloningProvider):
     LABEL = "VoxCPM（开源声纹克隆）"
     CAPABILITIES = frozenset({capabilities.CLONE})
-    # CONFIG_SCHEMA 只保留**模型加载参数**（一次性、跨请求稳定）。
-    # 已移除：
-    # - prompt_text → voice 粒度（voice_refs.prompt_text，抽取声纹时填）
+    # CONFIG_SCHEMA 只保留**模型加载参数**（一次性、跨请求稳定）。Provider 创建/
+    # 更新端点会按这个 schema 白名单过滤 config（admin.py:_whitelist_config），从根
+    # 杜绝旧字段残留污染请求。
+    # 已搬走：
+    # - prompt_text → audio_transcripts 缓存（按 audio_path 索引），抽取声纹时 ASR
+    #   自动落库；worker 反查注入 voice_metadata
     # - cfg_value / inference_timesteps → 生成请求粒度（TtsRequest.generation，每次合成可调）
     CONFIG_SCHEMA = [
         ConfigField(
@@ -263,24 +266,21 @@ class VoxCpmCloningProvider(CloningProvider):
                 details={"provider": self.name},
             )
 
-        # 读取优先级（从高到低）：
-        # 1. generation_params（请求时覆盖）→ 2. self.config（Provider 默认）→ 3. 硬编码默认
-        # voice_metadata.prompt_text 是 voice 粒度（参考音频对应的转写），与 voice 绑定
+        # 字段来源原则（与 GptSoVitsProvider 对齐——Provider config 不再做 fallback）：
+        # - prompt_text：仅来自 voice_metadata（worker 从 audio_transcripts 缓存注入；
+        #   ASR 在抽取声纹时自动跑）。Provider config 不再参与，避免 stale 字段污染。
+        # - cfg_value / inference_timesteps：仅 generation_params + 硬编码 default。
         gp = generation_params or {}
         vm = voice_metadata or {}
         try:
-            cfg_value = float(gp.get("cfg_value") or self.config.get("cfg_value") or 2.0)
+            cfg_value = float(gp.get("cfg_value") or 2.0)
         except (TypeError, ValueError):
             cfg_value = 2.0
         try:
-            inference_timesteps = int(
-                gp.get("inference_timesteps") or self.config.get("inference_timesteps") or 10
-            )
+            inference_timesteps = int(gp.get("inference_timesteps") or 10)
         except (TypeError, ValueError):
             inference_timesteps = 10
-        prompt_text = str(
-            vm.get("prompt_text") or self.config.get("prompt_text") or ""
-        ).strip()
+        prompt_text = str(vm.get("prompt_text") or "").strip()
 
         # voxcpm 包是 facade：VoxCPM.from_pretrained 根据 config.json 的 architecture
         # 字段加载 VoxCPMModel (v1, 如 VoxCPM-0.5B) 或 VoxCPM2Model (v2)。
@@ -314,10 +314,13 @@ class VoxCpmCloningProvider(CloningProvider):
             # v1.x：必须 prompt_wav_path + prompt_text 同传，否则 voxcpm 直接抛错
             if not prompt_text:
                 raise InferenceError(
-                    "VoxCPM 1.x (e.g. VoxCPM-0.5B) requires both reference audio AND its "
-                    "transcript. Set `prompt_text` in this Provider's config (the words "
-                    "that are spoken in the reference audio), or switch to VoxCPM2 which "
-                    "supports zero-shot cloning without transcript.",
+                    "VoxCPM 1.x (e.g. VoxCPM-0.5B) requires the reference audio "
+                    "transcript, but none is cached for this voice (audio_transcripts "
+                    "row missing). Likely cause: no default ASR Provider was configured "
+                    "when the voice was extracted. Configure an ASR Provider, then "
+                    "delete and re-extract the voice — extraction auto-transcribes via "
+                    "ASR. Or switch to VoxCPM2 which supports zero-shot cloning without "
+                    "transcript.",
                     details={"provider": self.name, "model_arch": "voxcpm-v1"},
                 )
             gen_kwargs["prompt_wav_path"] = reference_audio_path

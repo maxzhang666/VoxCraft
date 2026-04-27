@@ -50,7 +50,6 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
   const [temperature, setTemperature] = useState<number | null>(null);
   const [textSplitMethod, setTextSplitMethod] = useState<string>("");
   const [textLang, setTextLang] = useState<string>("");
-  const [promptLang, setPromptLang] = useState<string>("");
   const [cfgValue, setCfgValue] = useState<number | null>(null);
   const [inferenceTimesteps, setInferenceTimesteps] = useState<number | null>(null);
 
@@ -86,7 +85,6 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
       setTemperature(null);
       setTextSplitMethod("");
       setTextLang("");
-      setPromptLang("");
       setCfgValue(null);
       setInferenceTimesteps(null);
     }
@@ -161,7 +159,6 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
         if (temperature !== null) generation.temperature = temperature;
         if (textSplitMethod) generation.text_split_method = textSplitMethod;
         if (textLang) generation.text_lang = textLang;
-        if (promptLang) generation.prompt_lang = promptLang;
       } else if (providerFamily === "voxcpm") {
         if (cfgValue !== null) generation.cfg_value = cfgValue;
         if (inferenceTimesteps !== null) generation.inference_timesteps = inferenceTimesteps;
@@ -336,24 +333,6 @@ export function TtsDrawer({ visible, onClose, onSuccess }: Props) {
                           { label: "韩文 (ko)", value: "ko" },
                           { label: "粤语 (yue)", value: "yue" },
                           { label: "auto（多语种自动切）", value: "auto" },
-                        ]}
-                        style={{ width: "100%" }}
-                      />
-                    </div>
-                    <div>
-                      <Text type="tertiary" size="small">参考音频语言 prompt_lang</Text>
-                      <Select
-                        value={promptLang}
-                        onChange={(v) => setPromptLang(String(v))}
-                        showClear
-                        placeholder="默认走 voice 抽取时填的"
-                        optionList={[
-                          { label: "auto（让模型自判）", value: "auto" },
-                          { label: "中文 (zh)", value: "zh" },
-                          { label: "英文 (en)", value: "en" },
-                          { label: "日文 (ja)", value: "ja" },
-                          { label: "韩文 (ko)", value: "ko" },
-                          { label: "粤语 (yue)", value: "yue" },
                         ]}
                         style={{ width: "100%" }}
                       />

@@ -113,13 +113,13 @@ export interface Voice {
   sample_url?: string | null;
   provider_name: string;
   source: "preset" | "cloned";
-  /** 仅 cloned voice：抽取时填的参考音频转写，与音色绑定 */
-  prompt_text?: string | null;
-  /** 仅 cloned voice：参考音频语言代码（zh/en/ja/ko/yue/auto） */
-  prompt_lang?: string | null;
 }
 
-/** 每次 TTS 合成可调的采样/切分参数；不传走 Provider 默认值。 */
+/** 每次 TTS 合成可调的采样/切分参数；不传走 Provider 默认值。
+ *
+ * 注意：参考音频语言（prompt_lang）不在这里——它是参考音频本身的语种，由抽取
+ * 声纹时 ASR 自动检测，跟用户每次合成的目标输出无关。
+ */
 export interface TtsGenerationParams {
   /** 采样 top_k（GPT-SoVITS） */
   top_k?: number;
@@ -131,8 +131,6 @@ export interface TtsGenerationParams {
   text_split_method?: string;
   /** 目标语言（GPT-SoVITS）：zh/en/ja/ko/yue。同一个 voice 可输出不同目标语言 */
   text_lang?: string;
-  /** 参考音频语言（GPT-SoVITS）：覆盖 voice 抽取时填的默认 prompt_lang，调试用 */
-  prompt_lang?: string;
   /** CFG 引导强度（VoxCPM） */
   cfg_value?: number;
   /** 推理步数（VoxCPM） */

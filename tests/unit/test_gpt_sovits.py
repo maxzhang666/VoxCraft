@@ -125,54 +125,110 @@ def test_load_without_package_raises(monkeypatch, model_dir: Path):
 
 
 def test_synthesize_requires_reference_audio(mock_gpt_sovits, model_dir: Path):
-    p = GptSoVitsProvider(
-        name="gs",
-        config={"model_dir": str(model_dir), "prompt_text": "hello"},
-    )
+    p = GptSoVitsProvider(name="gs", config={"model_dir": str(model_dir)})
     p.load()
     with pytest.raises(InferenceError) as exc:
         p.synthesize("你好", voice_id="gs_xxx")
     assert "reference_audio_path is required" in exc.value.message
 
 
-def test_synthesize_requires_prompt_text(mock_gpt_sovits, model_dir: Path):
-    p = GptSoVitsProvider(name="gs", config={"model_dir": str(model_dir)})
-    p.load()
-    with pytest.raises(InferenceError) as exc:
-        p.synthesize(
-            "你好", voice_id="gs_x", reference_audio_path="/r.wav",
-        )
-    assert "prompt_text" in exc.value.message.lower()
-
-
-def test_synthesize_passes_inputs_and_returns_wav(mock_gpt_sovits, model_dir: Path):
+def test_synthesize_requires_prompt_text_from_voice_metadata(
+    mock_gpt_sovits, model_dir: Path,
+):
+    """voice_metadata 没有 prompt_text → fail-fast；不再从 self.config 兜底。"""
     p = GptSoVitsProvider(
         name="gs",
         config={
             "model_dir": str(model_dir),
-            "prompt_text": "Hello world",
+            # 即使 Provider config 里残留 stale prompt_text，也不应被拿来兜底
+            "prompt_text": "stale_value_from_old_config",
             "prompt_lang": "en",
-            "top_k": 20,
-            "top_p": "0.9",
-            "temperature": "0.8",
-            "text_split_method": "cut3",
+        },
+    )
+    p.load()
+    with pytest.raises(InferenceError) as exc:
+        p.synthesize(
+            "你好", voice_id="gs_x", reference_audio_path="/r.wav",
+            voice_metadata={"reference_audio_path": "/r.wav"},  # 无 prompt_text
+        )
+    msg = exc.value.message.lower()
+    assert "transcript" in msg
+    assert "audio_transcripts" in msg or "asr" in msg
+
+
+def test_synthesize_ignores_stale_provider_config(
+    mock_gpt_sovits, model_dir: Path,
+):
+    """关键防御：voice 提供了 prompt_text，Provider config 里的 stale 字段
+    不再混入合成请求。这是 vx_c846bbe8ef80 那次「克隆」污染的回归用例。"""
+    p = GptSoVitsProvider(
+        name="gs",
+        config={
+            "model_dir": str(model_dir),
+            # 全是已搬走的 stale 字段；如果代码再有 self.config.get(...) 兜底，
+            # 测试就会暴露——`prompt_text` 应是 voice 的值，不是这里的 "stale"
+            "prompt_text": "stale",
+            "prompt_lang": "stale_lang",
+            "top_k": 99,
+            "top_p": "0.5",
+            "temperature": "0.5",
+            "text_split_method": "cut0",
+            "text_lang": "stale_lang",
         },
     )
     p.load()
     out = p.synthesize(
         "你好世界",
-        voice_id="gs_x",
+        voice_id="vx_x",
+        reference_audio_path="/data/ref.wav",
+        voice_metadata={
+            "reference_audio_path": "/data/ref.wav",
+            "prompt_text": "from_voice",
+            "prompt_lang": "zh",
+        },
+    )
+    assert isinstance(out, bytes) and out.startswith(b"RIFF")
+
+    inputs = mock_gpt_sovits["inputs"]
+    assert inputs["prompt_text"] == "from_voice"           # 来自 voice，非 stale
+    assert inputs["prompt_lang"] == "zh"                   # 来自 voice，非 stale
+    assert inputs["text_lang"] == "zh"                     # generation_params 不传 → 默认 zh，非 stale
+    assert inputs["text_split_method"] == "cut5"           # 默认 cut5，非 stale
+    assert inputs["top_k"] == 15                           # 默认 15，非 stale
+    assert inputs["top_p"] == 1.0                          # 默认 1.0，非 stale
+    assert inputs["temperature"] == 1.0                    # 默认 1.0，非 stale
+
+
+def test_synthesize_generation_params_override_defaults(
+    mock_gpt_sovits, model_dir: Path,
+):
+    """generation_params 是采样/切分参数的唯一可调来源（请求时显式给）。"""
+    p = GptSoVitsProvider(name="gs", config={"model_dir": str(model_dir)})
+    p.load()
+    out = p.synthesize(
+        "你好世界",
+        voice_id="vx_x",
         reference_audio_path="/data/ref.wav",
         speed=1.2,
+        voice_metadata={
+            "reference_audio_path": "/data/ref.wav",
+            "prompt_text": "ref transcript",
+            "prompt_lang": "en",
+        },
+        generation_params={
+            "top_k": 20,
+            "top_p": 0.9,
+            "temperature": 0.8,
+            "text_split_method": "cut3",
+            "text_lang": "zh",
+        },
     )
-    assert isinstance(out, bytes)
     assert out.startswith(b"RIFF")
 
     inputs = mock_gpt_sovits["inputs"]
     assert inputs["text"] == "你好世界"
     assert inputs["text_lang"] == "zh"
-    assert inputs["ref_audio_path"] == "/data/ref.wav"
-    assert inputs["prompt_text"] == "Hello world"
+    assert inputs["prompt_text"] == "ref transcript"
     assert inputs["prompt_lang"] == "en"
     assert inputs["top_k"] == 20
     assert inputs["top_p"] == 0.9
@@ -182,14 +238,14 @@ def test_synthesize_passes_inputs_and_returns_wav(mock_gpt_sovits, model_dir: Pa
 
 
 def test_synthesize_unsupported_format_raises(mock_gpt_sovits, model_dir: Path):
-    p = GptSoVitsProvider(
-        name="gs",
-        config={"model_dir": str(model_dir), "prompt_text": "x"},
-    )
+    p = GptSoVitsProvider(name="gs", config={"model_dir": str(model_dir)})
     p.load()
     with pytest.raises(InferenceError):
         p.synthesize(
             "你好", voice_id="gs_x", format="mp3", reference_audio_path="/r.wav",
+            voice_metadata={
+                "reference_audio_path": "/r.wav", "prompt_text": "x",
+            },
         )
 
 

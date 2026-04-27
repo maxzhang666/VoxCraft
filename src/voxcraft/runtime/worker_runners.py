@@ -200,26 +200,36 @@ def _run_asr(req: JobRequest, inst, emit: EmitFn | None) -> JobResult:
 
 
 def _lookup_voice_metadata(voice_id: str) -> dict | None:
-    """voice_id → voice_refs 完整元数据：reference_audio_path / prompt_text /
-    prompt_lang / speaker_name。zero-shot 克隆 Provider 用，其他 Provider 忽略。
+    """voice_id → voice_refs 元数据 + audio_transcripts 缓存合并。
+
+    voice_refs 行只保存"音色 = 录音 + 说话人"这种纯净抽象。"参考音频说了什么"
+    （prompt_text / prompt_lang）是模型实现细节，被独立放在 audio_transcripts
+    缓存表里，由抽取声纹时的 ASR 自动填——这里把缓存合入 voice_metadata，
+    使下游 Provider（GPT-SoVITS / VoxCPM 1.x 等需要参考转写的）能照常按
+    `vm.get("prompt_text")` 拿到值，对 Provider 端是无感切换。
 
     返回 None 时（voice_id 非 vx_ 前缀或不存在）走 Provider 默认音色路径。
+    缓存未命中则 prompt_text/prompt_lang 为 None；需要它们的 Provider 应
+    fail-fast 报清楚的错（提示用户重抽 voice 或配置 ASR Provider）。
     """
     if not voice_id or not voice_id.startswith("vx_"):
         return None
     from sqlmodel import Session
     from voxcraft.db.engine import get_engine
-    from voxcraft.db.models import VoiceRef
+    from voxcraft.db.models import AudioTranscript, VoiceRef
 
     with Session(get_engine()) as s:
         row = s.get(VoiceRef, voice_id)
-    if row is None:
-        return None
+        if row is None:
+            return None
+        cached = s.get(AudioTranscript, row.reference_audio_path)
     return {
         "reference_audio_path": row.reference_audio_path,
-        "prompt_text": row.prompt_text,
-        "prompt_lang": row.prompt_lang,
         "speaker_name": row.speaker_name,
+        # 缓存命中才填；未命中保持 None（Provider 据此判断 voice 是否可用）
+        "prompt_text": cached.text if cached else None,
+        "prompt_lang": cached.language if cached else None,
+        "transcript_source": cached.asr_provider if cached else None,
     }
 
 
