@@ -88,19 +88,27 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=docker
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker,mode=max' || '' }}
           provenance: false
-          # SOURCE_DATE_EPOCH=1：build 内部工具（uv/pip）尊重固定时间戳，消除
-          # wheel install metadata 漂移。这条 + Dockerfile 的 `find ... touch -h
-          # -d @0` 已经能让 layer 字节级稳定（用户实测验证 client docker pull
-          # 不再重下 3GB 层）。
-          # 之前还启用过 BuildKit `rewrite-timestamp=true` outputs——它会在
-          # export image 阶段强制重写整个 5GB image 的 layer mtime，加上
-          # cache_to mode=max 写入，让 src-only CI 从 ~3min 涨到 ~11min。
-          # 既然前两层已经够稳（用户验证），砍掉这条恢复之前的快速 build。
+          # Reproducible build 三层措施（缺一不可——之前砍掉第三层后 client
+          # 立刻报"又重下 3.8GB"，证伪了"前两层已经够"的乐观判断）：
+          # 1. SOURCE_DATE_EPOCH build-arg：build 内部工具（uv/pip）尊重固定
+          #    时间戳代替 build wallclock
+          # 2. Dockerfile `find ... touch -h -d @0`：归一文件系统 mtime
+          # 3. outputs rewrite-timestamp=true：BuildKit 在 export image 阶段把
+          #    所有 layer tar entry mtime 重写为 SOURCE_DATE_EPOCH。前两层
+          #    只让磁盘文件 mtime 稳定，但 BuildKit 打 tar 时仍可能用 build
+          #    wallclock 写 entry header → tar blob 漂移 → client 重下。
+          #    这条是真正让 layer blob 跨 build 字节稳定的开关。
+          #
+          # 代价：export 阶段重写 5GB image + cache_to mode=max 写所有中间
+          # layer 共 ~7-8min。src-only commit 总 CI ~10min。这是 reproducibility
+          # 的固定开销——换的是 client docker pull 永远 "Already exists"，
+          # 长期看远胜每次重下 3.8GB。
           build-args: |
             SOURCE_DATE_EPOCH=1
+          outputs: |
+            type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
