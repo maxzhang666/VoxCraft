@@ -95,18 +95,6 @@ function buildBadges(job: Job, elapsed: string | null): Badge[] {
       return out;
     }
 
-    case "clone": {
-      const out: Badge[] = [];
-      if (job.provider_name) out.push({ text: job.provider_name });
-      if (srcSize !== null) out.push({ text: `参考 ${formatBytes(srcSize)}` });
-      const text = reqStr(req, "text");
-      if (text) out.push({ text: `${text.length} 字` });
-      const mainSize = sizes.main;
-      if (typeof mainSize === "number") out.push({ text: formatBytes(mainSize) });
-      if (elapsed) out.push({ text: timeText });
-      return out;
-    }
-
     case "separate": {
       const out: Badge[] = [];
       if (job.provider_name) out.push({ text: job.provider_name });

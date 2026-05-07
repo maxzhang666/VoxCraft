@@ -20,7 +20,6 @@ const TIER_LABEL: Record<string, { label: string; color: string }> = {
 const KIND_LABEL: Record<string, string> = {
   asr: "语音识别",
   tts: "语音合成",
-  cloning: "语音克隆",
   separator: "人声分离",
   unknown: "未分类",
 };

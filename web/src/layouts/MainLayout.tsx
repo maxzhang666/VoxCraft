@@ -3,7 +3,6 @@ import {
   IconHome,
   IconMicrophone,
   IconSong,
-  IconUser,
   IconMusic,
   IconVideoListStroked,
   IconSetting,
@@ -20,7 +19,6 @@ const NAV_ITEMS = [
   { itemKey: "/", text: t.nav.dashboard, icon: <IconHome /> },
   { itemKey: "/asr", text: t.nav.asr, icon: <IconMicrophone /> },
   { itemKey: "/tts", text: t.nav.tts, icon: <IconSong /> },
-  { itemKey: "/cloning", text: t.nav.cloning, icon: <IconUser /> },
   { itemKey: "/separator", text: t.nav.separator, icon: <IconMusic /> },
   {
     itemKey: "/video-translate",

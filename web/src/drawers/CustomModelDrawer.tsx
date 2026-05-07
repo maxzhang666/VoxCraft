@@ -98,7 +98,6 @@ export function CustomModelDrawer({ visible, onClose, onSuccess }: Props) {
             optionList={[
               { label: "语音识别 (ASR)", value: "asr" },
               { label: "语音合成 (TTS)", value: "tts" },
-              { label: "语音克隆 (Cloning)", value: "cloning" },
               { label: "人声分离 (Separator)", value: "separator" },
             ]}
           />

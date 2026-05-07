@@ -61,24 +61,11 @@ function ParamsSummary({
     const v = request[k];
     return typeof v === "string" ? v : null;
   };
-  const b = (k: string): boolean | null => {
-    const v = request[k];
-    return typeof v === "boolean" ? v : null;
-  };
   const rs = (k: string): unknown => result[k];
 
   const data: { key: string; value: React.ReactNode }[] = [
     { key: "源 → 目标", value: `${s("source_lang") ?? "auto"} → ${s("target_lang") ?? "-"}` },
     { key: "字幕模式", value: s("subtitle_mode") ?? "-" },
-    {
-      key: "克隆",
-      value:
-        b("clone_voice") === true ? (
-          <Tag color="teal">开启</Tag>
-        ) : (
-          <Tag>关闭</Tag>
-        ),
-    },
     { key: "对齐模式", value: s("align_mode") ?? "-" },
     { key: "检测语言", value: typeof rs("language") === "string" ? (rs("language") as string) : "-" },
     {

@@ -6,7 +6,6 @@ import pytest
 from voxcraft.providers.base import (
     AsrProvider,
     AsrResult,
-    CloningProvider,
     Provider,
     SeparatorProvider,
     TranslationProvider,
@@ -25,7 +24,7 @@ def test_abstract_provider_not_instantiable():
 
 
 def test_abstract_subclasses_not_instantiable():
-    for cls in (AsrProvider, TtsProvider, CloningProvider, SeparatorProvider, TranslationProvider):
+    for cls in (AsrProvider, TtsProvider, SeparatorProvider, TranslationProvider):
         with pytest.raises(TypeError):
             cls(name="x", config={})  # type: ignore[abstract]
 
@@ -33,7 +32,6 @@ def test_abstract_subclasses_not_instantiable():
 def test_kind_classvar_fixed():
     assert AsrProvider.kind == "asr"
     assert TtsProvider.kind == "tts"
-    assert CloningProvider.kind == "cloning"
     assert SeparatorProvider.kind == "separator"
     assert TranslationProvider.kind == "translation"
 

@@ -19,7 +19,6 @@ const KIND_FILTERS = [
   { label: "全部", value: "" },
   { label: "语音识别", value: "asr" },
   { label: "语音合成", value: "tts" },
-  { label: "语音克隆", value: "cloning" },
   { label: "人声分离", value: "separator" },
 ];
 

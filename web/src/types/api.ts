@@ -1,6 +1,6 @@
 // 与后端 Pydantic schemas 对齐。未来可用 openapi-typescript 自动生成。
 
-export type ProviderKind = "asr" | "tts" | "cloning" | "separator";
+export type ProviderKind = "asr" | "tts" | "separator";
 
 export interface Provider {
   id: number;
@@ -30,7 +30,6 @@ export type ProviderUpdate = Partial<
 export type JobKind =
   | "asr"
   | "tts"
-  | "clone"
   | "separate"
   | "video_translate";
 
@@ -71,7 +70,6 @@ export interface VideoTranslateSubmitParams {
   target_lang: string;
   source_lang?: string;
   subtitle_mode?: SubtitleMode;
-  clone_voice?: boolean;
   align_mode?: AlignMode;
   align_max_speedup?: number;
   asr_provider_id?: number;

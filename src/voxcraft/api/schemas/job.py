@@ -36,7 +36,7 @@ class JobResponse(BaseModel):
 
 
 class JobSubmitResponse(BaseModel):
-    """异步提交端点的响应（/asr /tts /tts/clone /separate /jobs/{id}/retry）。"""
+    """异步提交端点的响应（/asr /tts /separate /jobs/{id}/retry）。"""
 
     job_id: str
     status: str

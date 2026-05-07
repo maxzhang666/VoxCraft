@@ -8,9 +8,6 @@ from __future__ import annotations
 from voxcraft.errors import ProviderError
 from voxcraft.providers.asr.whisper import WhisperProvider
 from voxcraft.providers.base import Provider
-from voxcraft.providers.cloning.gpt_sovits import GptSoVitsProvider
-from voxcraft.providers.cloning.indextts import IndexTtsProvider
-from voxcraft.providers.cloning.voxcpm import VoxCpmCloningProvider
 from voxcraft.providers.separator.demucs import DemucsProvider
 from voxcraft.providers.tts.piper import PiperProvider
 
@@ -18,9 +15,6 @@ from voxcraft.providers.tts.piper import PiperProvider
 PROVIDER_REGISTRY: dict[str, type[Provider]] = {
     "WhisperProvider": WhisperProvider,
     "PiperProvider": PiperProvider,
-    "VoxCpmCloningProvider": VoxCpmCloningProvider,
-    "IndexTtsProvider": IndexTtsProvider,
-    "GptSoVitsProvider": GptSoVitsProvider,
     "DemucsProvider": DemucsProvider,
     # OpenAiCompatProvider（翻译，v0.5+）
 }

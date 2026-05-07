@@ -60,16 +60,14 @@ def mock_asr_registered(monkeypatch):
 
 @pytest.fixture
 def mock_all_registered(monkeypatch):
-    """一次性注入全部 Mock Provider 供 TTS/Clone/Separate 集成测试。"""
+    """一次性注入全部 Mock Provider 供 TTS / Separate 集成测试。"""
     from voxcraft.providers.mock import (
-        InMemoryMockCloningProvider,
         InMemoryMockSeparatorProvider,
         InMemoryMockTtsProvider,
     )
     for cls in (
         InMemoryMockAsrProvider,
         InMemoryMockTtsProvider,
-        InMemoryMockCloningProvider,
         InMemoryMockSeparatorProvider,
     ):
         monkeypatch.setitem(registry.PROVIDER_REGISTRY, cls.__name__, cls)

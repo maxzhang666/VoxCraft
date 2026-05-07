@@ -16,6 +16,10 @@ branch_labels = None
 depends_on = None
 
 
+def _has_table(bind, table: str) -> bool:
+    return table in sa.inspect(bind).get_table_names()
+
+
 def _has_column(bind, table: str, column: str) -> bool:
     inspector = sa.inspect(bind)
     if table not in inspector.get_table_names():
@@ -25,6 +29,10 @@ def _has_column(bind, table: str, column: str) -> bool:
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # voice_cloning 整体下线后 voice_refs 表不再属于当前 ORM；fresh DB 不会创建该表，
+    # 此迁移整段在新建库上变为 no-op（仅历史 DB 仍会按需补列）
+    if not _has_table(bind, "voice_refs"):
+        return
     if not _has_column(bind, "voice_refs", "prompt_text"):
         op.add_column("voice_refs", sa.Column("prompt_text", sa.Text(), nullable=True))
     if not _has_column(bind, "voice_refs", "prompt_lang"):
@@ -33,6 +41,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
+    if not _has_table(bind, "voice_refs"):
+        return
     if _has_column(bind, "voice_refs", "prompt_lang"):
         op.drop_column("voice_refs", "prompt_lang")
     if _has_column(bind, "voice_refs", "prompt_text"):

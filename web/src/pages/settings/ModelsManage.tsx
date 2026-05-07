@@ -38,11 +38,10 @@ import type {
 const { Title } = Typography;
 const { TabPane } = Tabs;
 
-const KINDS: ProviderKind[] = ["asr", "tts", "cloning", "separator"];
+const KINDS: ProviderKind[] = ["asr", "tts", "separator"];
 const KIND_LABEL: Record<ProviderKind, string> = {
   asr: "语音识别",
   tts: "语音合成",
-  cloning: "语音克隆",
   separator: "人声分离",
 };
 

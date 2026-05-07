@@ -12,8 +12,9 @@ from voxcraft.models_lib.catalog import (
 )
 
 
-def test_catalog_has_twelve_entries():
-    assert len(CATALOG) == 12
+def test_catalog_has_seven_entries():
+    # cloning 整体下线后剩：Whisper 3 + Piper 3 + Demucs 1
+    assert len(CATALOG) == 7
 
 
 def test_catalog_keys_unique():
@@ -58,17 +59,13 @@ def test_catalog_entry_is_frozen():
         e.key = "mutated"  # type: ignore[misc]
 
 
-def test_catalog_cloning_entries_include_known_providers():
-    cloning_keys = {e.key for e in CATALOG if e.kind == "cloning"}
-    assert "voxcpm-0.5b" in cloning_keys
-    assert "voxcpm-2" in cloning_keys
-    assert "indextts-1.5" in cloning_keys
-    assert "indextts-2" in cloning_keys
-    assert "gpt-sovits-v2pro" in cloning_keys
+def test_catalog_no_cloning_entries():
+    """声纹克隆已下线，目录里不应再有 cloning kind。"""
+    assert not any(e.kind == "cloning" for e in CATALOG)
 
 
 def test_ms_sources_for_cn_users():
-    """国内用户依赖 ModelScope 镜像，至少 Whisper/VoxCPM/IndexTTS 要有 ms 源。"""
+    """国内用户依赖 ModelScope 镜像，至少 Whisper 要有 ms 源。"""
     for e in CATALOG:
-        if e.kind in ("asr", "cloning"):
+        if e.kind == "asr":
             assert "ms" in e.sources or "url" in e.sources, f"{e.key} lacks CN-friendly source"

@@ -70,43 +70,6 @@ class Job(SQLModel, table=True):
     )
 
 
-class VoiceRef(SQLModel, table=True):
-    """音色 = 纯说话人身份 + 那段参考音频。
-
-    历史教训：曾把"参考音频转写"(prompt_text) 和"参考音频语言"(prompt_lang) 直接
-    挂在这表上，结果"音色"这个抽象里塞进了 GPT-SoVITS / VoxCPM 这些 zero-shot
-    模型的实现细节——用户视角里"音色"应该只是一段录音 + 说话人，不该被迫理解
-    为什么有些模型要转写。两字段已搬去 audio_transcripts 缓存表（key=audio_path），
-    抽取声纹时由 ASR 自动填，对用户不可见。
-    """
-    __tablename__ = "voice_refs"
-
-    id: str = Field(primary_key=True)
-    speaker_name: str | None = None
-    reference_audio_path: str
-    provider_name: str
-    created_at: datetime = Field(default_factory=_utcnow)
-
-
-class AudioTranscript(SQLModel, table=True):
-    """参考音频转写缓存。key = 音频文件绝对路径。
-
-    抽取声纹时用默认 ASR Provider 跑一遍写入；GPT-SoVITS / VoxCPM 等需要
-    "参考音频里说了什么"的 Provider 在合成时由 worker_runners 反查注入
-    voice_metadata。同一段音频只 ASR 一次，后续合成命中缓存。
-
-    audio_path 与 voice_refs.reference_audio_path 1:1 对应（VoxCraft 内部
-    voices/<voice_id>.wav 不会复用）；voice 删除时由 voice 删除流程级联清理本表行。
-    """
-    __tablename__ = "audio_transcripts"
-
-    audio_path: str = Field(primary_key=True)
-    text: str
-    language: str | None = None
-    asr_provider: str | None = None
-    computed_at: datetime = Field(default_factory=_utcnow)
-
-
 class AppSetting(SQLModel, table=True):
     __tablename__ = "app_settings"
 

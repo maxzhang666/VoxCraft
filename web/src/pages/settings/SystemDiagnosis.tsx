@@ -72,7 +72,7 @@ export function SystemDiagnosis() {
       {models && (
         <Card title="已启用模型">
           <Descriptions
-            data={(["asr", "tts", "cloning", "separator"] as const).map((k) => ({
+            data={(["asr", "tts", "separator"] as const).map((k) => ({
               key: k,
               value: models[k].join(" · ") || "（无）",
             }))}

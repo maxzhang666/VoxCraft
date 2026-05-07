@@ -23,7 +23,6 @@ from voxcraft.runtime.scheduler_api import JobRequest
 MOCK_IMPORTS = [
     "voxcraft.providers.mock:InMemoryMockAsrProvider",
     "voxcraft.providers.mock:InMemoryMockTtsProvider",
-    "voxcraft.providers.mock:InMemoryMockCloningProvider",
     "voxcraft.providers.mock:InMemoryMockSeparatorProvider",
 ]
 

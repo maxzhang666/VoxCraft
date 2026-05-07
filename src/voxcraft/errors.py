@@ -120,22 +120,7 @@ class UploadTooLargeError(VoxCraftError):
     default_status = 422
 
 
-class CloneNotSupportedError(VoxCraftError):
-    """clone_voice=true 但显式指定的 TTS Provider 不支持克隆。"""
-    default_code = "CLONE_NOT_SUPPORTED"
-    default_status = 422
-
-
-class CloneNotSupportedDefaultError(VoxCraftError):
-    """clone_voice=true 且默认 TTS 不支持克隆；拒绝自动降级，要求显式指定。"""
-    default_code = "CLONE_NOT_SUPPORTED_DEFAULT"
-    default_status = 422
-
-
-class CloneRefInvalidError(VoxCraftError):
-    """克隆参考音频不达标（过短 / 过静）。"""
-    default_code = "CLONE_REF_INVALID"
-    default_status = 422
+# Cloning-related errors removed when voice cloning was retired.
 
 
 class InvalidLangError(VoxCraftError):

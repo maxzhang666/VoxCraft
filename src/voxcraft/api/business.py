@@ -1,4 +1,4 @@
-"""业务 API：/asr /tts /tts/clone /separate（全异步，ADR-011 + ADR-013）。
+"""业务 API：/asr /tts /separate（全异步，ADR-011 + ADR-013）。
 
 HTTP 端点仅做：参数校验 → 落盘上传 → 写 Job(pending) → 派发后台 task → 返回 {job_id, status}。
 真正推理由 `run_job` 协程驱动：
@@ -25,7 +25,7 @@ from voxcraft.api.schemas.job import JobSubmitResponse
 from voxcraft.api.schemas.tts import TtsRequest, VoiceSchema, VoicesResponse
 from voxcraft.config import get_settings
 from voxcraft.db.engine import get_engine
-from voxcraft.db.models import Job, Provider, VoiceRef
+from voxcraft.db.models import Job, Provider
 from voxcraft.errors import ValidationError, VoxCraftError
 from voxcraft.events.bus import Event, EventBus
 from voxcraft.runtime.scheduler_api import JobRequest, JobResult
@@ -44,39 +44,33 @@ def get_session():
 
 def _select_provider(
     session: Session,
-    kind: str | tuple[str, ...],
+    kind: str,
     name: str | None,
 ) -> Provider:
-    """按 kind（单值或多值）+ name 查 enabled Provider。
-
-    多 kind 用于业务场景：TTS 路由需要 tts + cloning 共用——cloning 模型本身
-    能做合成（CloningProvider 是 TtsProvider 的子类），UI 把它们合并展示，
-    路由层也要兼容查询。
+    """按 kind + name 查 enabled Provider。
 
     语义：
-    - name 显式给定：跨所有候选 kind 按 name 查（name 在 Provider 表唯一）
-    - name 缺省：只取**首选 kind**（kinds[0]）的 default，避免跨 kind 默认歧义
+    - name 显式给定：按 (kind, name) 查
+    - name 缺省：取该 kind 的 is_default Provider
     """
-    kinds: tuple[str, ...] = (kind,) if isinstance(kind, str) else kind
     if name:
         q = select(Provider).where(
-            Provider.kind.in_(kinds),  # type: ignore[attr-defined]
+            Provider.kind == kind,
             Provider.enabled == True,  # noqa: E712
             Provider.name == name,
         )
     else:
         q = select(Provider).where(
-            Provider.kind == kinds[0],
+            Provider.kind == kind,
             Provider.enabled == True,  # noqa: E712
             Provider.is_default == True,  # noqa: E712
         )
     row = session.exec(q).first()
     if row is None:
-        kind_label = kinds[0] if len(kinds) == 1 else "/".join(kinds)
         raise ValidationError(
-            f"No {kind_label} provider available"
+            f"No {kind} provider available"
             + (f" named {name}" if name else " (no default)"),
-            details={"kind": list(kinds), "requested": name},
+            details={"kind": kind, "requested": name},
         )
     return row
 
@@ -190,8 +184,7 @@ async def submit_tts(
     body: TtsRequest,
     session: Session = Depends(get_session),
 ) -> JobSubmitResponse:
-    # cloning Provider 也是 TtsProvider 子类，UI 合并展示；路由层同时接受两 kind
-    p_row = _select_provider(session, kind=("tts", "cloning"), name=body.provider)
+    p_row = _select_provider(session, kind="tts", name=body.provider)
     job_id = str(uuid.uuid4())
     now = datetime.now(UTC)
 
@@ -213,42 +206,6 @@ async def submit_tts(
     session.commit()
     await _publish_status(
         request.app.state.event_bus, job_id=job_id, kind="tts", status="pending",
-    )
-    asyncio.create_task(run_job(job_id, request.app.state))
-    return JobSubmitResponse(job_id=job_id, status="pending")
-
-
-@router.post("/tts/clone", response_model=JobSubmitResponse, status_code=202)
-async def submit_clone(
-    request: Request,
-    text: str = Form(..., min_length=1, max_length=10000),
-    reference_audio: UploadFile = File(...),
-    speaker_name: str | None = Form(None),
-    provider: str | None = Form(None),
-    session: Session = Depends(get_session),
-) -> JobSubmitResponse:
-    p_row = _select_provider(session, kind="cloning", name=provider)
-    job_id = str(uuid.uuid4())
-    source_path, source_size = _save_upload(reference_audio, job_id, ".wav")
-    now = datetime.now(UTC)
-
-    session.add(
-        Job(
-            id=job_id, kind="clone", status="pending",
-            provider_name=p_row.name,
-            request={
-                "text": text,
-                "speaker_name": speaker_name,
-                "reference_filename": reference_audio.filename,
-                "source_size_bytes": source_size,
-            },
-            source_path=str(source_path),
-            progress=0.0, created_at=now,
-        )
-    )
-    session.commit()
-    await _publish_status(
-        request.app.state.event_bus, job_id=job_id, kind="clone", status="pending",
     )
     asyncio.create_task(run_job(job_id, request.app.state))
     return JobSubmitResponse(job_id=job_id, status="pending")
@@ -290,50 +247,20 @@ async def submit_separate(
 
 @router.get("/tts/voices", response_model=VoicesResponse)
 async def list_voices(session: Session = Depends(get_session)):
-    """返回全部可用音色，前端按 provider_name 过滤渲染。
-
-    两类 source：
-    - `preset`：非克隆 TTS（如 Piper）自带的单音色；id = Provider 名
-    - `cloned`：来自 VoiceRef（声纹克隆页动态生成）
-
-    克隆型 Provider（声明 CAPABILITIES 含 "clone"）**不** 产出 preset 条目——
-    其音色仅来自 VoiceRef。
-    """
+    """返回全部可用音色——预设 TTS（Piper 等）自带的单音色；id = Provider 名。"""
     voices: list[VoiceSchema] = []
-
     providers = session.exec(
         select(Provider).where(
             Provider.enabled == True,  # noqa: E712
-            Provider.kind.in_(["tts", "cloning"]),  # type: ignore[attr-defined]
+            Provider.kind == "tts",
         )
     ).all()
     for p in providers:
-        if _provider_supports_clone(p.class_name):
-            # 克隆型 Provider：没有内置预设音色
-            continue
         voices.append(VoiceSchema(
             id=p.name, language="zh",
             provider_name=p.name, source="preset",
         ))
-
-    for v in session.exec(select(VoiceRef)).all():
-        voices.append(VoiceSchema(
-            id=v.id, language="zh",
-            provider_name=v.provider_name, source="cloned",
-            # 试听端点：浏览器直连读流；只对 vx_ 前缀生效（见 voices.get_voice_sample）
-            sample_url=f"/api/tts/voices/{v.id}/sample",
-        ))
     return VoicesResponse(voices=voices)
-
-
-def _provider_supports_clone(class_name: str) -> bool:
-    """是否是克隆型 Provider。查 registry 获取 CAPABILITIES；unknown class 保守视为非克隆。"""
-    from voxcraft.providers import capabilities
-    from voxcraft.providers.registry import PROVIDER_REGISTRY
-    cls = PROVIDER_REGISTRY.get(class_name)
-    if cls is None:
-        return False
-    return capabilities.CLONE in cls.CAPABILITIES
 
 
 # ---------- 后台 Runner（异步提交 + retry 共用入口）----------
@@ -374,7 +301,7 @@ async def run_job(job_id: str, app_state) -> None:
         else:
             p_row = session.exec(
                 select(Provider).where(
-                    Provider.kind.in_(_candidate_provider_kinds(kind)),  # type: ignore[attr-defined]
+                    Provider.kind == _kind_to_provider_kind(kind),
                     Provider.name == job.provider_name,
                     Provider.enabled == True,  # noqa: E712
                 )
@@ -442,19 +369,9 @@ async def _finalize_video_translate_warnings(job_id: str, warnings: list[str]) -
 
 
 def _kind_to_provider_kind(kind: str) -> str:
-    # Job.kind ∈ {asr, tts, clone, separate}；Provider.kind ∈ {asr, tts, cloning, separator}
-    return {"clone": "cloning", "separate": "separator"}.get(kind, kind)
-
-
-def _candidate_provider_kinds(job_kind: str) -> tuple[str, ...]:
-    """Job.kind → 候选 Provider.kind 列表。
-
-    TTS Job 接受 tts + cloning Provider（CloningProvider 是 TtsProvider 子类，
-    UI 合并展示，Job 二次查询也得兼容）。其他 Job 只查同名 kind。
-    """
-    if job_kind == "tts":
-        return ("tts", "cloning")
-    return (_kind_to_provider_kind(job_kind),)
+    # Job.kind ∈ {asr, tts, separate, video_translate}；
+    # Provider.kind ∈ {asr, tts, separator, ...}
+    return {"separate": "separator"}.get(kind, kind)
 
 
 async def _finalize_failure(
@@ -488,22 +405,6 @@ async def _finalize_success(
         j = session.get(Job, job_id)
         if j is None or j.status == "cancelled":
             return
-
-        # Clone 特殊：新增 VoiceRef + 把 voice_id 合入 request
-        if kind == "clone" and result.voice_id:
-            existing = session.get(VoiceRef, result.voice_id)
-            if existing is None:
-                suffix = Path(req.source_path).suffix if req.source_path else ".wav"
-                ref_final = _outputs_dir() / "voices" / f"{result.voice_id}{suffix}"
-                session.add(
-                    VoiceRef(
-                        id=result.voice_id,
-                        speaker_name=req.request_meta.get("speaker_name"),
-                        reference_audio_path=str(ref_final),
-                        provider_name=req.provider_name,
-                    )
-                )
-            j.request = {**(j.request or {}), "voice_id": result.voice_id}
 
         # video_translate：把 result["warnings"] 写入 Job.warnings
         if kind == "video_translate" and result.result:

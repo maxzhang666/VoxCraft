@@ -10,17 +10,17 @@ import {
   Upload,
 } from "@douyinfe/semi-ui";
 import { IconChevronDown, IconChevronRight, IconUpload } from "@douyinfe/semi-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+
 
 import { listLlms } from "@/api/llm";
-import { listProviderClasses, listProviders } from "@/api/providers";
+import { listProviders } from "@/api/providers";
 import { submitVideoTranslate } from "@/api/videoTranslate";
 import { TaskCreationDrawer } from "@/components/TaskCreationDrawer";
 import type {
   AlignMode,
   LlmProvider,
   Provider,
-  ProviderClassSchema,
   SubtitleMode,
 } from "@/types/api";
 
@@ -59,7 +59,6 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
   const [targetLang, setTargetLang] = useState<string>("zh");
   const [sourceLang, setSourceLang] = useState<string | undefined>();
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("soft");
-  const [cloneVoice, setCloneVoice] = useState<boolean>(true);
   const [alignMode, setAlignMode] = useState<AlignMode>("elastic");
   const [alignMaxSpeedup, setAlignMaxSpeedup] = useState<number>(1.3);
   const [asrProviderId, setAsrProviderId] = useState<number | undefined>();
@@ -80,7 +79,6 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
   const [asrProviders, setAsrProviders] = useState<Provider[]>([]);
   const [ttsProviders, setTtsProviders] = useState<Provider[]>([]);
   const [llmProviders, setLlmProviders] = useState<LlmProvider[]>([]);
-  const [classSchemas, setClassSchemas] = useState<ProviderClassSchema[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
@@ -88,7 +86,6 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
     setTargetLang("zh");
     setSourceLang(undefined);
     setSubtitleMode("soft");
-    setCloneVoice(true);
     setAlignMode("elastic");
     setAlignMaxSpeedup(1.3);
     setAsrProviderId(undefined);
@@ -113,34 +110,15 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
     Promise.all([
       listProviders("asr"),
       listProviders("tts"),
-      listProviders("cloning"),
       listLlms(),
-      listProviderClasses(),
     ])
-      .then(([asr, tts, cloning, llms, schemas]) => {
+      .then(([asr, tts, llms]) => {
         setAsrProviders(asr.filter((p) => p.enabled));
-        setTtsProviders([...tts, ...cloning].filter((p) => p.enabled));
+        setTtsProviders(tts.filter((p) => p.enabled));
         setLlmProviders(llms.filter((p) => p.enabled));
-        setClassSchemas(schemas);
       })
       .catch(() => undefined);
   }, [visible]);
-
-  const isCloneCapable = useMemo(() => {
-    return (classSchema: string | undefined) => {
-      if (!classSchema) return false;
-      const s = classSchemas.find((c) => c.class_name === classSchema);
-      return !!s?.capabilities?.includes("clone");
-    };
-  }, [classSchemas]);
-
-  const selectedTts = useMemo(
-    () => ttsProviders.find((p) => p.id === ttsProviderId),
-    [ttsProviders, ttsProviderId],
-  );
-
-  const cloneUnsupported =
-    cloneVoice && selectedTts && !isCloneCapable(selectedTts.class_name);
 
   const handleSubmit = async () => {
     if (!file) {
@@ -151,12 +129,6 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
       Toast.warning("请填写目标语言");
       return;
     }
-    if (cloneUnsupported) {
-      Toast.warning(
-        `${selectedTts?.name} 不支持克隆，请关闭克隆或换一个支持克隆的 TTS`,
-      );
-      return;
-    }
     setSubmitting(true);
     try {
       await submitVideoTranslate({
@@ -164,7 +136,6 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
         target_lang: targetLang,
         source_lang: sourceLang || undefined,
         subtitle_mode: subtitleMode,
-        clone_voice: cloneVoice,
         align_mode: alignMode,
         align_max_speedup: alignMaxSpeedup,
         asr_provider_id: asrProviderId,
@@ -256,22 +227,6 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
           />
         </Form.Slot>
 
-        <Form.Slot label="声纹克隆">
-          <div
-            style={{ display: "flex", alignItems: "center", gap: 8 }}
-          >
-            <Switch checked={cloneVoice} onChange={setCloneVoice} />
-            <Text type="tertiary" size="small">
-              开启后用原说话人音色合成；需要支持克隆的 TTS Provider
-            </Text>
-          </div>
-          {cloneUnsupported && (
-            <Text type="danger" size="small" style={{ marginTop: 4 }}>
-              所选 TTS Provider 不支持克隆
-            </Text>
-          )}
-        </Form.Slot>
-
         <div
           onClick={() => setAdvancedOpen(!advancedOpen)}
           style={{
@@ -330,15 +285,10 @@ export function VideoTranslateDrawer({ visible, onClose, onSuccess }: Props) {
               placeholder="使用默认"
               showClear
               style={{ width: "100%" }}
-              optionList={ttsProviders.map((p) => {
-                const canClone = isCloneCapable(p.class_name);
-                return {
-                  label: `${p.is_default ? p.name + "（默认）" : p.name}${
-                    canClone ? " · 支持克隆" : ""
-                  }`,
-                  value: p.id,
-                };
-              })}
+              optionList={ttsProviders.map((p) => ({
+                label: p.is_default ? `${p.name}（默认）` : p.name,
+                value: p.id,
+              }))}
             />
           </Form.Slot>
 

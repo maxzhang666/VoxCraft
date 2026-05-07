@@ -178,13 +178,9 @@ def run_video_translate(
         assert isinstance(tts_inst, TtsProvider), "tts provider kind mismatch"
         lru.ensure_loaded(tts_inst)
 
-        # clone_voice：若开启且 Provider 是 CloningProvider，用原音频做 zero-shot 克隆
-        # 视频原音频路径同时作为参考声纹路径透传给 synthesize（VoxCPM 等需要）
+        # 预设 TTS（Piper 等）：voice_id = Provider 名（单模型单音色）。
+        # 声纹克隆功能已下线，不再做参考音频注入。
         voice_id: str = tts_inst.name
-        ref_audio_path: str | None = None
-        if meta.get("clone_voice") and _is_cloning_provider(tts_inst):
-            voice_id = _prepare_clone_voice(tts_inst, str(audio_path))
-            ref_audio_path = str(audio_path)
 
         seg_audio_paths: list[Path] = []
         measured_durations: list[float] = []
@@ -192,7 +188,6 @@ def run_video_translate(
         for idx, p in enumerate(planned):
             audio_bytes = tts_inst.synthesize(
                 p.text, voice_id=voice_id, speed=p.speed, format="wav",
-                reference_audio_path=ref_audio_path,
             )
             path = scratch_dir / f"seg_{idx:04d}.wav"
             path.write_bytes(audio_bytes)
@@ -400,20 +395,6 @@ def _degrade_or_none(
 
 def _instantiate_provider(spec: dict):
     return instantiate(spec["class_name"], name=spec["name"], config=spec["config"])
-
-
-def _is_cloning_provider(inst) -> bool:
-    from voxcraft.providers.base import CloningProvider
-    return isinstance(inst, CloningProvider)
-
-
-def _prepare_clone_voice(tts_inst, reference_audio_path: str) -> str:
-    """从原音轨抽一段参考音频调 clone_voice；失败不致命，回落 provider.name。"""
-    try:
-        return tts_inst.clone_voice(reference_audio_path, speaker_name=None)
-    except Exception as e:  # noqa: BLE001
-        log.warning("orchestrator.clone_voice_fallback", error=str(e))
-        return tts_inst.name
 
 
 def _build_llm_chat_fn(llm_config: dict) -> LlmChatFn:

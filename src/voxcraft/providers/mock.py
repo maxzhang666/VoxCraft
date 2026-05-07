@@ -5,12 +5,10 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from voxcraft.providers import capabilities
 from voxcraft.providers.base import (
     AsrProvider,
     AsrResult,
     AsrSegment,
-    CloningProvider,
     ProviderInfo,
     SeparateResult,
     SeparatorProvider,
@@ -68,8 +66,6 @@ class InMemoryMockTtsProvider(TtsProvider):
 
     def synthesize(
         self, text: str, voice_id: str, speed: float = 1.0, format: str = "wav",
-        reference_audio_path: str | None = None,  # noqa: ARG002 — mock 忽略
-        voice_metadata: dict | None = None,  # noqa: ARG002 — mock 忽略
         generation_params: dict | None = None,  # noqa: ARG002 — mock 忽略
     ) -> bytes:
         return b"RIFF....WAVEmock"
@@ -99,41 +95,3 @@ class InMemoryMockSeparatorProvider(SeparatorProvider):
         v.write_bytes(b"RIFFmockvocalsdata")
         i.write_bytes(b"RIFFmockinstrudata")
         return SeparateResult(vocals_path=str(v), instrumental_path=str(i))
-
-
-class InMemoryMockCloningProvider(CloningProvider):
-    CAPABILITIES = frozenset({capabilities.CLONE})
-
-    def __init__(self, name: str, config: dict) -> None:
-        super().__init__(name, config)
-        self._voices: dict[str, str] = {}  # voice_id → speaker_name
-
-    def load(self) -> None:
-        self._loaded = True
-
-    def unload(self) -> None:
-        self._loaded = False
-
-    def info(self) -> ProviderInfo:
-        return ProviderInfo(
-            kind="cloning", name=self.name, class_name=type(self).__name__,
-            loaded=self._loaded, vram_mb=0,
-        )
-
-    def synthesize(
-        self, text: str, voice_id: str, speed: float = 1.0, format: str = "wav",
-        reference_audio_path: str | None = None,  # noqa: ARG002 — mock 忽略
-        voice_metadata: dict | None = None,  # noqa: ARG002 — mock 忽略
-        generation_params: dict | None = None,  # noqa: ARG002 — mock 忽略
-    ) -> bytes:
-        return b"RIFFmockclonewave"
-
-    def list_voices(self) -> list[Voice]:
-        return [Voice(id=vid, language="zh") for vid in self._voices]
-
-    def clone_voice(
-        self, reference_audio_path: str, speaker_name: str | None = None,
-    ) -> str:
-        vid = f"vx_mock_{uuid.uuid4().hex[:10]}"
-        self._voices[vid] = speaker_name or ""
-        return vid

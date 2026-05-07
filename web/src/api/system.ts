@@ -16,7 +16,6 @@ export interface HealthResponse {
 export interface ModelsResponse {
   asr: string[];
   tts: string[];
-  cloning: string[];
   separator: string[];
   translation: string[];
 }

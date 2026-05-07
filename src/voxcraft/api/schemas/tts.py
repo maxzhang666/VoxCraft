@@ -9,21 +9,13 @@ from pydantic import BaseModel, Field
 class TtsGenerationParams(BaseModel):
     """生成时可调的采样/切分参数。每次合成请求独立指定，不进 Provider 全局 config。
 
-    所有字段可选——不传走 Provider 默认值。Provider 会按各自模型的范围消化：
-    - VoxCPM 用 cfg_value / inference_timesteps
-    - GPT-SoVITS 用 top_k / top_p / temperature / text_split_method / text_lang
-    其他 Provider 忽略不认识的字段。
-
-    注意：prompt_lang 不在这里——它是"参考音频本身的语种"，由 audio_transcripts
-    缓存里 ASR 自动检测的结果派生，跟用户每次合成的目标输出无关。
+    所有字段可选——不传走 Provider 默认值。Provider 实现忽略不认识的字段。
+    当前 cloning 路径已下线，主要保留以便未来 TTS Provider 扩展沿用。
     """
     top_k: int | None = Field(None, ge=1, le=100)
     top_p: float | None = Field(None, gt=0, le=1.0)
     temperature: float | None = Field(None, gt=0, le=2.0)
-    text_split_method: str | None = None  # GPT-SoVITS: cut0..cut5
     text_lang: str | None = None  # 目标输出语言；不传默认 "zh"
-    cfg_value: float | None = Field(None, gt=0)             # VoxCPM
-    inference_timesteps: int | None = Field(None, ge=1, le=100)  # VoxCPM
 
 
 class TtsRequest(BaseModel):
@@ -40,26 +32,10 @@ class VoiceSchema(BaseModel):
     id: str
     language: str
     gender: str | None = None
-    sample_url: str | None = None
     provider_name: str                    # 归属 Provider；前端按此过滤
-    source: Literal["preset", "cloned"]   # preset=Provider 内置单音色；cloned=VoiceRef
+    # 仅保留 preset——cloned 路径已下线
+    source: Literal["preset"] = "preset"
 
 
 class VoicesResponse(BaseModel):
     voices: list[VoiceSchema]
-
-
-class VoiceExtractResponse(BaseModel):
-    """POST /api/tts/voices/extract 返回：抽取声纹后的 voice 信息。
-
-    voice 与 ASR 完全解耦——抽取只保存音频 + 落 voice_refs 行，不依赖 ASR Provider
-    存在。需要参考转写的 cloning Provider（GPT-SoVITS / VoxCPM 1.x）在合成时由
-    worker 按需 lazy 跑一次 ASR 并缓存（audio_transcripts 表）；不需要参考转写的
-    Provider（Piper 预设等）从头到尾接触不到 ASR 概念。
-    """
-
-    voice_id: str
-    speaker_name: str | None = None
-    provider_name: str
-    reference_audio_path: str
-    duration_seconds: float | None = None

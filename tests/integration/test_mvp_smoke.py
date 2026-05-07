@@ -5,11 +5,10 @@ from tests.conftest import wait_for_job
 
 
 def _create_mock_set(client):
-    """注入 4 个 Mock Provider 作为默认，覆盖 ASR/TTS/Cloning/Separator。"""
+    """注入 3 个 Mock Provider 作为默认，覆盖 ASR/TTS/Separator。"""
     specs = [
         ("asr", "mock-asr", "InMemoryMockAsrProvider"),
         ("tts", "mock-tts", "InMemoryMockTtsProvider"),
-        ("cloning", "mock-clone", "InMemoryMockCloningProvider"),
         ("separator", "mock-sep", "InMemoryMockSeparatorProvider"),
     ]
     ids: dict[str, int] = {}
@@ -32,7 +31,7 @@ def test_mvp_smoke_full_flow(client, mock_all_registered):
     # 2. 初始 Provider 表为空（无 seed）
     assert client.get("/api/admin/providers").json() == []
 
-    # 3. 注入 4 个 Mock Provider 作为各 kind 的默认
+    # 3. 注入 3 个 Mock Provider 作为各 kind 的默认
     _create_mock_set(client)
 
     # 4. /asr（异步：202 + job_id，轮询至 succeeded）
@@ -53,51 +52,34 @@ def test_mvp_smoke_full_flow(client, mock_all_registered):
     tts_job_id = r_tts.json()["job_id"]
     assert wait_for_job(client, tts_job_id)["status"] == "succeeded"
 
-    # 6. /tts/clone
-    r_clone = client.post(
-        "/api/tts/clone",
-        files={"reference_audio": ("ref.wav", b"RIFFref", "audio/wav")},
-        data={"text": "克隆测试"},
-    )
-    assert r_clone.status_code == 202, r_clone.text
-    clone_job_id = r_clone.json()["job_id"]
-    clone_final = wait_for_job(client, clone_job_id)
-    assert clone_final["status"] == "succeeded"
-    voice_id = clone_final["request"]["voice_id"]
-
-    # 7. /separate
+    # 6. /separate
     r_sep = client.post("/api/separate", files={"audio": ("s.wav", b"RIFFs", "audio/wav")})
     assert r_sep.status_code == 202, r_sep.text
     sep_job_id = r_sep.json()["job_id"]
     assert wait_for_job(client, sep_job_id)["status"] == "succeeded"
 
-    # 8. 跨能力 Jobs 列表：4 条
+    # 7. 跨能力 Jobs 列表：3 条（cloning 整体下线后）
     jobs = client.get("/api/jobs").json()
-    assert len(jobs) == 4
-    assert {j["kind"] for j in jobs} == {"asr", "tts", "clone", "separate"}
+    assert len(jobs) == 3
+    assert {j["kind"] for j in jobs} == {"asr", "tts", "separate"}
 
-    # 9. 能力页过滤
+    # 8. 能力页过滤
     asr_jobs = client.get("/api/jobs", params={"kind": "asr"}).json()
     assert len(asr_jobs) == 1
 
-    # 10. TTS / Clone 产物下载
+    # 9. TTS 产物下载
     assert client.get(f"/api/jobs/{tts_job_id}/output").status_code == 200
-    assert client.get(f"/api/jobs/{clone_job_id}/output").status_code == 200
 
-    # 11. Separator 多产物
+    # 10. Separator 多产物
     assert client.get(f"/api/jobs/{sep_job_id}/output", params={"key": "vocals"}).status_code == 200
     assert client.get(f"/api/jobs/{sep_job_id}/output", params={"key": "instrumental"}).status_code == 200
 
-    # 12. 预览流（无 attachment）
+    # 11. 预览流（无 attachment）
     r_preview = client.get(f"/api/jobs/{tts_job_id}/output/preview")
     assert r_preview.status_code == 200
     assert "attachment" not in r_preview.headers.get("content-disposition", "")
 
-    # 13. 音色列表含新创建的 voice_id
-    voices = client.get("/api/tts/voices").json()["voices"]
-    assert any(v["id"] == voice_id for v in voices)
-
-    # 14. /models 聚合视图
+    # 12. /models 聚合视图
     models = client.get("/api/models").json()
     assert "mock-asr" in models["asr"]
     assert "mock-tts" in models["tts"]
@@ -203,10 +185,10 @@ def test_mvp_smoke_models_library_flow(client, monkeypatch):
     monkeypatch.setattr(svc_mod, "download_hf", _fake)
     monkeypatch.setattr(svc_mod, "download_ms", _fake)
 
-    # 1. catalog 列表含 11 内置
+    # 1. catalog 列表含 7 内置（cloning 整体下线后）
     entries = client.get("/api/admin/models-library").json()
     builtins = [e for e in entries if e["is_builtin"]]
-    assert len(builtins) == 11
+    assert len(builtins) == 7
 
     # 2. 下载 whisper-tiny
     r = client.post("/api/admin/models-library/whisper-tiny/download")

@@ -34,7 +34,8 @@ def _has_table(bind, table: str) -> bool:
 def upgrade() -> None:
     bind = op.get_bind()
 
-    # 1) 新建 audio_transcripts 缓存表
+    # 1) 新建 audio_transcripts 缓存表（即便 cloning 后续整体下线，本表已迁移过的库
+    #    会保留为 orphan；不再删除以保持迁移链单调）
     if not _has_table(bind, "audio_transcripts"):
         op.create_table(
             "audio_transcripts",
@@ -48,7 +49,10 @@ def upgrade() -> None:
             ),
         )
 
-    # 2) voice_refs 去掉 prompt_text / prompt_lang
+    # 2) voice_refs 去掉 prompt_text / prompt_lang——表自身可能不存在（fresh DB
+    #    不再有此 ORM 模型），整段直接 no-op
+    if not _has_table(bind, "voice_refs"):
+        return
     if _has_column(bind, "voice_refs", "prompt_lang"):
         op.drop_column("voice_refs", "prompt_lang")
     if _has_column(bind, "voice_refs", "prompt_text"):
@@ -57,9 +61,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    if not _has_column(bind, "voice_refs", "prompt_text"):
-        op.add_column("voice_refs", sa.Column("prompt_text", sa.Text(), nullable=True))
-    if not _has_column(bind, "voice_refs", "prompt_lang"):
-        op.add_column("voice_refs", sa.Column("prompt_lang", sa.String(16), nullable=True))
+    if _has_table(bind, "voice_refs"):
+        if not _has_column(bind, "voice_refs", "prompt_text"):
+            op.add_column("voice_refs", sa.Column("prompt_text", sa.Text(), nullable=True))
+        if not _has_column(bind, "voice_refs", "prompt_lang"):
+            op.add_column("voice_refs", sa.Column("prompt_lang", sa.String(16), nullable=True))
     if _has_table(bind, "audio_transcripts"):
         op.drop_table("audio_transcripts")

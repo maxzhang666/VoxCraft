@@ -1,7 +1,7 @@
 """Worker-side 推理 runner（ADR-013）。
 
 这些函数是 **纯同步** 的：输入 JobRequest（已是 picklable），内部 instantiate Provider、
-调用 transcribe/synthesize/clone_voice/separate、写产物到 output_dir，返回 JobResult。
+调用 transcribe/synthesize/separate、写产物到 output_dir，返回 JobResult。
 
 - 不依赖主进程 DB session / asyncio event loop / EventBus
 - 不持有跨任务状态；LRU 由调用方（scheduler 后端）维护
@@ -28,7 +28,6 @@ import structlog
 from voxcraft.errors import VoxCraftError
 from voxcraft.providers.base import (
     AsrProvider,
-    CloningProvider,
     Provider,
     SeparatorProvider,
     TtsProvider,
@@ -92,14 +91,6 @@ def run(
             from voxcraft.video.orchestrator import run_video_translate
             result = run_video_translate(req, lru, emit_event)
         else:
-            # TTS Job 在加载 cloning Provider 之前先 lazy 跑一次 ASR：如果选中的
-            # voice 之前没缓存过参考转写、且当前 cloning Provider 类需要参考转写，
-            # 就在这里先用 LRU 加载 ASR Provider 跑一次 transcribe → 落 audio_transcripts
-            # → 然后再 LRU 切到 cloning Provider。这样只一次 LRU swap，避免"先载
-            # cloning → 检测 cache miss → 切 ASR → 切回 cloning"的双 swap 浪费。
-            # cloning 不需要转写的情况（VoxCPM 2 基础克隆 / Piper 预设）下这里短路。
-            if req.kind == "tts":
-                _maybe_lazy_transcribe(req, lru)
             inst = instantiate(
                 req.class_name, name=req.provider_name, config=req.provider_config,
             )
@@ -108,8 +99,6 @@ def run(
                 result = _run_asr(req, inst, emit_event)
             elif req.kind == "tts":
                 result = _run_tts(req, inst)
-            elif req.kind == "clone":
-                result = _run_clone(req, inst)
             elif req.kind == "separate":
                 result = _run_separate(req, inst)
             else:
@@ -118,8 +107,8 @@ def run(
                     error_code="UNKNOWN_KIND",
                     error_message=f"Unknown kind: {req.kind}",
                 )
-        # 注入 device 到 result.result；result 可能本来是 None（TTS / Clone / Separate
-        # 这些 kind），构造一个 dict 容纳。不影响 output_path / voice_id 等其他字段。
+        # 注入 device 到 result.result；result 可能本来是 None（TTS / Separate
+        # 这些 kind），构造一个 dict 容纳。不影响 output_path 等其他字段。
         merged = {**(result.result or {}), "device": device}
         log.info(
             "job.run.done",
@@ -207,158 +196,6 @@ def _run_asr(req: JobRequest, inst, emit: EmitFn | None) -> JobResult:
     )
 
 
-# cloning Provider 类是否会"用到"参考音频转写——注意是"用到"而非"必需"：
-# - GPT-SoVITS：原生支持 ref_text_free 模式，没转写也能跑（质量稍降）；但有转写
-#   质量更高
-# - VoxCPM 2：原生支持基础克隆模式，没转写也能跑；但有转写时升级到 ultimate cloning
-# - VoxCPM 1.x：硬需转写（voxcpm 库自身约束 prompt_wav_path + prompt_text 配对）
-# 列在这的目的：worker 在合成前 lazy 跑一次 ASR 把缓存填上，让两类 Provider 都能拿到
-# 最高质量。即使没 ASR 或 ASR 失败，Provider 自己有 fallback（除了 VoxCPM 1 会
-# fail-fast）——voice 不会因为没 ASR 就用不了。Piper 这类无 transcript 概念的
-# Provider 不在此列，整个 ASR 路径完全不进。
-_PROVIDERS_NEEDING_TRANSCRIPT: frozenset[str] = frozenset({
-    "GptSoVitsProvider",
-    "VoxCpmCloningProvider",
-})
-
-
-def _maybe_lazy_transcribe(req: JobRequest, lru: _LruOne) -> None:
-    """TTS Job 入口前的"按需补转写"：voice 没缓存过参考转写而当前 cloning Provider
-    类需要 → 用 LRU 加载默认 ASR Provider 跑一次 transcribe → 落 audio_transcripts。
-    随后 run() 流程会 instantiate cloning Provider 并 ensure_loaded（LRU 自动顶替
-    ASR），单次 swap。
-
-    设计原则：voice 与 ASR 解耦——抽取声纹时不跑 ASR、不依赖 ASR Provider 存在。
-    转写是"合成时"的实现细节，仅当某些 cloning Provider 类用到才按需触发。
-    Piper 这类无 transcript 需求的 Provider 完全不会进这条路径。
-
-    所有失败/跳过路径都**静默 return**，不抛——让请求照常进入 cloning Provider。
-    若真没 ASR Provider 又恰好是需要转写的 Provider，会在 synthesize 时由 Provider
-    自身 raise 上下文清晰的 InferenceError（"请配置 ASR Provider 或换不需转写的
-    Provider"），错误归属更准确。
-    """
-    if req.class_name not in _PROVIDERS_NEEDING_TRANSCRIPT:
-        return
-    voice_id = (req.request_meta or {}).get("voice_id", "")
-    if not voice_id or not voice_id.startswith("vx_"):
-        return  # preset 单音色 Provider 路径或无效 voice_id
-
-    from sqlmodel import Session, select  # noqa: PLC0415
-    from voxcraft.db.engine import get_engine  # noqa: PLC0415
-    from voxcraft.db.models import (  # noqa: PLC0415
-        AudioTranscript,
-        Provider as ProviderRow,
-        VoiceRef,
-    )
-
-    with Session(get_engine()) as s:
-        voice = s.get(VoiceRef, voice_id)
-        if voice is None or not voice.reference_audio_path:
-            return
-        audio_path = voice.reference_audio_path
-        if s.get(AudioTranscript, audio_path) is not None:
-            return  # 缓存命中，无需 ASR
-        # 选一个可用 ASR Provider：优先 is_default=True，否则取任一 enabled。
-        # 多数用户只有一个 ASR Provider 但未必把它设了"默认"；放宽避免误中"未配置"
-        # 路径
-        asr_row = s.exec(
-            select(ProviderRow).where(
-                ProviderRow.kind == "asr",
-                ProviderRow.enabled == True,  # noqa: E712
-            ).order_by(ProviderRow.is_default.desc())  # type: ignore[attr-defined]
-        ).first()
-        if asr_row is None:
-            log.info(
-                "lazy_transcribe.skip",
-                voice_id=voice_id, reason="no_enabled_asr_provider",
-            )
-            return
-        asr_class_name = asr_row.class_name
-        asr_name = asr_row.name
-        asr_config = dict(asr_row.config or {})
-
-    # 加载 ASR Provider 到 LRU——cloning Provider 此刻还未 instantiate，LRU 要么空、
-    # 要么是上一个 Job 残留（ensure_loaded 会自动 unload 它）。
-    try:
-        asr_inst = instantiate(asr_class_name, name=asr_name, config=asr_config)
-        lru.ensure_loaded(asr_inst)
-    except Exception as e:  # noqa: BLE001
-        log.warning(
-            "lazy_transcribe.load_failed",
-            voice_id=voice_id, asr_provider=asr_name, error=str(e),
-        )
-        return
-
-    try:
-        r = asr_inst.transcribe(audio_path)  # type: ignore[union-attr]
-    except Exception as e:  # noqa: BLE001
-        log.warning(
-            "lazy_transcribe.transcribe_failed",
-            voice_id=voice_id, audio_path=audio_path, error=str(e),
-        )
-        return
-
-    transcript = " ".join(
-        (seg.text or "").strip() for seg in r.segments
-    ).strip()
-    if not transcript:
-        log.warning(
-            "lazy_transcribe.empty",
-            voice_id=voice_id, audio_path=audio_path,
-            hint="audio may be silent / too short / noise-only",
-        )
-        return
-
-    # 落缓存——后续同一 voice 的合成请求直接命中，不再 ASR
-    with Session(get_engine()) as s:
-        s.merge(AudioTranscript(
-            audio_path=audio_path,
-            text=transcript,
-            language=r.language,
-            asr_provider=asr_name,
-        ))
-        s.commit()
-    log.info(
-        "lazy_transcribe.done",
-        voice_id=voice_id, asr_provider=asr_name,
-        text_chars=len(transcript), language=r.language,
-    )
-
-
-def _lookup_voice_metadata(voice_id: str) -> dict | None:
-    """voice_id → voice_refs 元数据 + audio_transcripts 缓存合并。
-
-    voice_refs 行只保存"音色 = 录音 + 说话人"这种纯净抽象。"参考音频说了什么"
-    （prompt_text / prompt_lang）是模型实现细节，被独立放在 audio_transcripts
-    缓存表里，由抽取声纹时的 ASR 自动填——这里把缓存合入 voice_metadata，
-    使下游 Provider（GPT-SoVITS / VoxCPM 1.x 等需要参考转写的）能照常按
-    `vm.get("prompt_text")` 拿到值，对 Provider 端是无感切换。
-
-    返回 None 时（voice_id 非 vx_ 前缀或不存在）走 Provider 默认音色路径。
-    缓存未命中则 prompt_text/prompt_lang 为 None；需要它们的 Provider 应
-    fail-fast 报清楚的错（提示用户重抽 voice 或配置 ASR Provider）。
-    """
-    if not voice_id or not voice_id.startswith("vx_"):
-        return None
-    from sqlmodel import Session
-    from voxcraft.db.engine import get_engine
-    from voxcraft.db.models import AudioTranscript, VoiceRef
-
-    with Session(get_engine()) as s:
-        row = s.get(VoiceRef, voice_id)
-        if row is None:
-            return None
-        cached = s.get(AudioTranscript, row.reference_audio_path)
-    return {
-        "reference_audio_path": row.reference_audio_path,
-        "speaker_name": row.speaker_name,
-        # 缓存命中才填；未命中保持 None（Provider 据此判断 voice 是否可用）
-        "prompt_text": cached.text if cached else None,
-        "prompt_lang": cached.language if cached else None,
-        "transcript_source": cached.asr_provider if cached else None,
-    }
-
-
 def _run_tts(req: JobRequest, inst) -> JobResult:
     assert isinstance(inst, TtsProvider)
     meta = req.request_meta
@@ -366,12 +203,9 @@ def _run_tts(req: JobRequest, inst) -> JobResult:
     voice_id = meta["voice_id"]
     speed = meta.get("speed", 1.0)
     fmt = meta.get("format", "wav")
-    voice_meta = _lookup_voice_metadata(voice_id)
     generation = meta.get("generation") or {}
     audio = inst.synthesize(
         text, voice_id=voice_id, speed=speed, format=fmt,
-        reference_audio_path=voice_meta["reference_audio_path"] if voice_meta else None,
-        voice_metadata=voice_meta,
         generation_params=generation,
     )
 
@@ -379,38 +213,11 @@ def _run_tts(req: JobRequest, inst) -> JobResult:
     out = Path(req.output_dir) / f"{req.job_id}{suffix}"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(audio)
-    # Provider 实现可在 synthesize 内填充 last_synthesis_debug（resolved 后的实际
-    # 输入 + 来源归属 + 音频时长 等）。worker 把它塞进 JobResult.result，前端任务
-    # 详情的 JsonViewer 会原样展示，便于诊断"prompt_text 究竟从哪来"这类配置漂移问题
+    # Provider 实现可在 synthesize 内填充 last_synthesis_debug。worker 把它塞进
+    # JobResult.result，前端任务详情的 JsonViewer 会原样展示。
     debug = getattr(inst, "last_synthesis_debug", None)
     result_dict = {"synthesis_debug": debug} if debug else None
     return JobResult(ok=True, output_path=str(out), result=result_dict)
-
-
-def _run_clone(req: JobRequest, inst) -> JobResult:
-    assert isinstance(inst, CloningProvider)
-    assert req.source_path, "Clone 必须有参考音频"
-    meta = req.request_meta
-    text = meta["text"]
-    speaker_name = meta.get("speaker_name")
-
-    voice_id = inst.clone_voice(req.source_path, speaker_name=speaker_name)
-
-    # 先把参考音频持久化到稳定路径，再 synthesize 时把这个路径传给 Provider
-    out_dir = Path(req.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ref_dir = out_dir / "voices"
-    ref_dir.mkdir(parents=True, exist_ok=True)
-    ref_final = ref_dir / f"{voice_id}{Path(req.source_path).suffix}"
-    shutil.copy2(req.source_path, ref_final)
-
-    audio = inst.synthesize(
-        text, voice_id=voice_id, reference_audio_path=str(ref_final),
-    )
-
-    out_path = out_dir / f"{req.job_id}.wav"
-    out_path.write_bytes(audio)
-    return JobResult(ok=True, output_path=str(out_path), voice_id=voice_id)
 
 
 def _run_separate(req: JobRequest, inst) -> JobResult:

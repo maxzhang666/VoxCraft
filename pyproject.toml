@@ -1,18 +1,15 @@
 [project]
 name = "voxcraft"
 version = "0.1.0"
-description = "自托管多模态音频推理服务 (ASR / TTS / 克隆 / 人声分离)"
-# 3.11 是 GPT-SoVITS 集成的甜蜜点：funasr/numba/pyopenjtalk 在 cp313 没 wheel；
-# 官方 README 测试矩阵 3.9/3.10/3.11；voxcpm/torch 2.6/whisper 在 3.11 OK
-requires-python = ">=3.11,<3.12"
+description = "自托管多模态音频推理服务 (ASR / TTS / 人声分离 / 视频翻译)"
+requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "MIT" }
 
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    # GPT-SoVITS 钉 pydantic<=2.10.6；与项目 >=2.9 取交集
-    "pydantic>=2.9,<=2.10.6",
+    "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "sqlmodel>=0.0.22",
     "alembic>=1.14",
@@ -23,70 +20,18 @@ dependencies = [
     "python-dotenv>=1.0",
     "faster-whisper>=1.0",
     "piper-tts>=1.4.2",
-    # modelscope：项目仅用 snapshot_download；GPT-SoVITS 也依赖 modelscope 拉模型
+    # modelscope：项目用 snapshot_download 拉模型镜像（CN 用户首选源）
     "modelscope>=1.27,<2",
     "openai>=1.50",
     "ffmpeg-python>=0.2.0",
     "zhconv>=1.4.3",
-    # GPU 支持：
-    # - torch：VoxCPM / IndexTTS / Demucs 系 provider 需要；/health 探测优先用它
-    # - nvidia-ml-py：torch 未加载场景（CPU 部署、mac 开发）下对 GPU 的轻量探测兜底
-    # torch 2.6 默认 PyPI wheel Linux 自带 CUDA 12.4 runtime（向下兼容驱动 ≥ 525）、
-    # mac arm64 自带 CPU/MPS wheel，无需自定义索引。仍支持 Pascal (sm_61)，2.7 才会砍。
+    # GPU：torch / torchaudio 给 demucs（人声分离）+ /health 探测；
+    # faster-whisper 走 ctranslate2 不强需 torch，但生态里复用 torch 避免双 ABI。
+    # torch 2.6 默认 PyPI wheel Linux 自带 CUDA 12.4 runtime（驱动 ≥ 525）、
+    # mac arm64 自带 CPU/MPS wheel；仍兼容 Pascal sm_61。
     "torch>=2.6,<2.7",
-    # torchaudio 必须跟 torch 同 minor 版本（PyTorch 团队同步发布；torchaudio 2.11
-    # 需要 torch 2.11，会动态链接 libcudart.so.13）。voxcpm 不限制 torchaudio 上限，
-    # uv 默认拉最新 → ABI mismatch。这里跟 torch 同步钉住 2.6.x。
     "torchaudio>=2.6,<2.7",
     "nvidia-ml-py>=12",
-    # 声纹克隆 Provider：默认随项目装；用户在「模型库」下载 VoxCPM 模型后即可用
-    "voxcpm>=2.0",
-    # ==== GPT-SoVITS v2Pro 集成所需 ====
-    # GPT-SoVITS 仓库为 import-from-tree 风格（Dockerfile git clone 到 /opt + PYTHONPATH 注入），
-    # 但其 requirements.txt 里的 Python 依赖必须装到 .venv 里运行时才能 import。
-    # 来源：https://raw.githubusercontent.com/RVC-Boss/GPT-SoVITS/main/requirements.txt
-    # （commit ea2d2a8）— 整套 requirements.txt 必须穷举写入，否则 TTS.py 链式
-    # import 在某个子模块（AR / module / BigVGAN / feature_extractor / tools / text）
-    # 撞 ModuleNotFoundError；之前漏 x_transformers 已经踩过坑。
-    # PyQt5 / matplotlib / tensorboard 等仅 webui/training 用，不进推理路径，省略。
-    "pytorch-lightning>=2.4",
-    "onnxruntime-gpu",
-    "funasr==1.0.27",
-    "transformers>=4.43,<=4.50",
-    "peft<0.18.0",
-    "ctranslate2>=4.0,<5",
-    "numba",
-    "librosa==0.10.2",
-    "numpy<2.0",
-    "torchmetrics<=1.5",
-    "av>=11",
-    # —— GPT-SoVITS 模型核心 ——
-    "x-transformers",
-    "rotary-embedding-torch",
-    # —— 文本前端 / g2p / 多语种（即便只输出中文也会 chain-import 全部）——
-    # gradio：GPT-SoVITS requirements 钉 <5 但只 webui 用；voxcpm 钉 >=6，
-    # 两者冲突。verify 过 TTS_infer_pack 推理路径不 import gradio，从这里移除，
-    # 让 voxcpm 拉 gradio 6+ 满足它自己的 webui 需求即可。
-    "cn2an",
-    "pypinyin",
-    # pyopenjtalk 跳过：sdist-only（PyPI 没 cp311 wheel），首次构建编 OpenJTalk
-    # C 库 ~30 min。仅在 prompt_lang='ja' 或 text_lang='ja' 时用，本项目场景
-    # （非中文音色 → 中文输出）不需要日语 g2p。如将来要日语，进容器手动
-    # `uv pip install pyopenjtalk` 即可（或重新加回 pyproject）。
-    # "pyopenjtalk>=0.4.1",
-    "g2p-en",
-    "sentencepiece",
-    "jieba",
-    "jieba-fast",
-    "split-lang",
-    "fast-langdetect>=0.3.1",
-    "wordsegment",
-    "tojyutping",
-    "g2pk2",
-    "ko-pron",
-    "opencc",
-    "python-mecab-ko;sys_platform != 'win32'",
-    "chardet",
     "psutil",
 ]
 

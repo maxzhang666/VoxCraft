@@ -56,7 +56,6 @@ function KindActions({ job, onDelete }: Props) {
         </Space>
       );
     case "tts":
-    case "clone":
       return (
         <Space>
           {!disabled && (

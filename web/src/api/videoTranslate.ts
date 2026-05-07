@@ -9,8 +9,6 @@ export async function submitVideoTranslate(
   fd.append("target_lang", params.target_lang);
   if (params.source_lang) fd.append("source_lang", params.source_lang);
   if (params.subtitle_mode) fd.append("subtitle_mode", params.subtitle_mode);
-  if (params.clone_voice !== undefined)
-    fd.append("clone_voice", String(params.clone_voice));
   if (params.align_mode) fd.append("align_mode", params.align_mode);
   if (params.align_max_speedup !== undefined)
     fd.append("align_max_speedup", String(params.align_max_speedup));

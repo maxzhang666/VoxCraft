@@ -7,7 +7,6 @@ const BASENAME = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 import { MainLayout } from "@/layouts/MainLayout";
 import { SettingsLayout } from "@/layouts/SettingsLayout";
 import { AsrPage } from "@/pages/asr/AsrPage";
-import { CloningPage } from "@/pages/cloning/CloningPage";
 import { Dashboard } from "@/pages/Dashboard";
 import { SeparatorPage } from "@/pages/separator/SeparatorPage";
 import { TtsPage } from "@/pages/tts/TtsPage";
@@ -28,7 +27,6 @@ export const router = createBrowserRouter(
         { index: true, element: <Dashboard /> },
         { path: "asr", element: <AsrPage /> },
         { path: "tts", element: <TtsPage /> },
-        { path: "cloning", element: <CloningPage /> },
         { path: "separator", element: <SeparatorPage /> },
         { path: "video-translate", element: <VideoTranslatePage /> },
         {

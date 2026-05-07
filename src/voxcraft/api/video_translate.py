@@ -45,16 +45,12 @@ from voxcraft.config import get_settings
 from voxcraft.db.models import Job, LlmProvider, Provider
 from voxcraft.runtime.scheduler_api import JobRequest
 from voxcraft.errors import (
-    CloneNotSupportedDefaultError,
-    CloneNotSupportedError,
     InvalidLangError,
     InvalidMediaError,
     LlmNotConfiguredError,
     UploadTooLargeError,
     ValidationError,
 )
-from voxcraft.providers import capabilities
-from voxcraft.providers.registry import resolve
 
 
 log = structlog.get_logger()
@@ -123,35 +119,6 @@ def _validate_provider_row(
     return row
 
 
-def _provider_capabilities(class_name: str) -> frozenset[str]:
-    return resolve(class_name).CAPABILITIES
-
-
-def _default_provider(session: Session, kind: str) -> Provider | None:
-    return session.exec(
-        select(Provider).where(
-            Provider.kind == kind,
-            Provider.enabled == True,  # noqa: E712
-            Provider.is_default == True,  # noqa: E712
-        )
-    ).first()
-
-
-def _list_clone_capable_tts_ids(session: Session) -> list[int]:
-    """枚举所有 enabled + 支持 clone 的 TTS/cloning Provider id，用于错误消息引导。"""
-    rows = session.exec(
-        select(Provider).where(
-            Provider.enabled == True,  # noqa: E712
-            Provider.kind.in_(["tts", "cloning"]),  # type: ignore[attr-defined]
-        )
-    ).all()
-    return [
-        row.id for row in rows
-        if row.id is not None
-        and capabilities.CLONE in _provider_capabilities(row.class_name)
-    ]
-
-
 # ---------- 路由 ----------
 
 @router.post("/video-translate", response_model=JobSubmitResponse, status_code=202)
@@ -161,7 +128,6 @@ async def submit_video_translate(
     target_lang: str = Form(..., min_length=1, max_length=16),
     source_lang: str | None = Form(None, max_length=16),
     subtitle_mode: SubtitleMode = Form(SubtitleMode.soft),
-    clone_voice: bool = Form(True),
     align_mode: AlignMode = Form(AlignMode.elastic),
     align_max_speedup: float = Form(1.3, ge=MIN_SPEEDUP, le=MAX_SPEEDUP),
     asr_provider_id: int | None = Form(None),
@@ -229,57 +195,19 @@ async def submit_video_translate(
                 status_code=422,
                 details={"provider_id": tts_provider_id, "role": "tts"},
             )
-        if tts_row.kind not in ("tts", "cloning"):
+        if tts_row.kind != "tts":
             raise ValidationError(
                 f"tts provider kind mismatch: got {tts_row.kind}",
                 code="PROVIDER_NOT_FOUND",
                 status_code=422,
                 details={
                     "provider_id": tts_provider_id,
-                    "expected_kind": "tts|cloning",
+                    "expected_kind": "tts",
                     "actual_kind": tts_row.kind,
                 },
             )
     else:
         tts_row = None
-
-    # 6. 克隆能力：显式指定 → 该 Provider 必须声明 "clone"
-    if clone_voice and tts_row is not None:
-        caps = _provider_capabilities(tts_row.class_name)
-        if capabilities.CLONE not in caps:
-            raise CloneNotSupportedError(
-                f"provider {tts_row.name} does not support voice cloning",
-                details={
-                    "provider_id": tts_row.id,
-                    "class_name": tts_row.class_name,
-                    "capabilities": sorted(caps),
-                },
-            )
-
-    # 7. 克隆能力：未指定 tts_provider_id → 查默认 Provider 是否支持 clone
-    #    clone_voice=true 时优先选 cloning kind（生来支持克隆）；否则 tts kind
-    if clone_voice and tts_row is None:
-        default_tts = _default_provider(session, "cloning") or _default_provider(
-            session, "tts",
-        )
-        if default_tts is None:
-            raise ValidationError(
-                "no default tts/cloning provider configured",
-                code="PROVIDER_NOT_FOUND", status_code=422,
-                details={"role": "tts"},
-            )
-        caps = _provider_capabilities(default_tts.class_name)
-        if capabilities.CLONE not in caps:
-            clone_candidates = _list_clone_capable_tts_ids(session)
-            raise CloneNotSupportedDefaultError(
-                f"default tts provider {default_tts.name} does not support cloning; "
-                f"please specify tts_provider_id explicitly",
-                details={
-                    "default_provider_id": default_tts.id,
-                    "default_class": default_tts.class_name,
-                    "clone_capable_provider_ids": clone_candidates,
-                },
-            )
 
     # 8. LLM 可用性
     if llm_provider_id is not None:
@@ -340,7 +268,6 @@ async def submit_video_translate(
         "target_lang": target_lang,
         "source_lang": source_lang,
         "subtitle_mode": subtitle_mode.value,
-        "clone_voice": clone_voice,
         "align_mode": align_mode.value,
         "align_max_speedup": align_max_speedup,
         "asr_provider_id": asr_provider_id,
@@ -397,11 +324,9 @@ def build_video_translate_request(
 ) -> JobRequest:
     """把 Job 持久化的编排参数 + DB 中的 ASR/TTS/LLM 配置，打包为 JobRequest。
 
-    - Provider id 缺省时走 is_default（clone_voice=true 时优先 cloning kind）
-    - 任何查找失败抛 VoxCraftError，由 business.run_job 写失败
+    Provider id 缺省时走 is_default。任何查找失败抛 VoxCraftError。
     """
     meta = dict(job.request or {})
-    clone_voice = bool(meta.get("clone_voice"))
 
     asr_row = _pick_provider(
         session,
@@ -409,10 +334,11 @@ def build_video_translate_request(
         kinds=("asr",),
         role="asr",
     )
-    tts_row = _pick_tts_provider(
+    tts_row = _pick_provider(
         session,
         explicit_id=meta.get("tts_provider_id"),
-        prefer_clone=clone_voice,
+        kinds=("tts",),
+        role="tts",
     )
     llm_row = _pick_llm(session, explicit_id=meta.get("llm_provider_id"))
 
@@ -436,7 +362,6 @@ def build_video_translate_request(
         "target_lang": meta["target_lang"],
         "source_lang": meta.get("source_lang"),
         "subtitle_mode": meta.get("subtitle_mode", "soft"),
-        "clone_voice": clone_voice,
         "align_mode": meta.get("align_mode", "elastic"),
         "align_max_speedup": float(meta.get("align_max_speedup", 1.3)),
         "system_prompt": meta.get("system_prompt"),
@@ -485,23 +410,6 @@ def _pick_provider(
         f"no default {role} provider configured",
         code="PROVIDER_NOT_FOUND",
         details={"role": role, "kinds": list(kinds)},
-    )
-
-
-def _pick_tts_provider(
-    session: Session, *, explicit_id: int | None, prefer_clone: bool,
-) -> Provider:
-    if explicit_id is not None:
-        return _pick_provider(
-            session, explicit_id=explicit_id,
-            kinds=("tts", "cloning"), role="tts",
-        )
-    # 未显式：clone_voice 开启时优先从 cloning kind 选默认；否则 tts 优先
-    kinds: tuple[str, ...] = (
-        ("cloning", "tts") if prefer_clone else ("tts", "cloning")
-    )
-    return _pick_provider(
-        session, explicit_id=None, kinds=kinds, role="tts",
     )
 
 

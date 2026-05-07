@@ -139,45 +139,21 @@ class TtsProvider(Provider):
         voice_id: str,
         speed: float = 1.0,
         format: str = "wav",
-        reference_audio_path: str | None = None,
-        voice_metadata: dict | None = None,
         generation_params: dict | None = None,
     ) -> bytes:
         """返回合成后的音频字节。
 
-        ``reference_audio_path``：可选参考声纹路径——zero-shot 克隆模型
-        （VoxCPM / GPT-SoVITS / IndexTTS）需要做 speaker embedding；预设音色
-        Provider（Piper）忽略。worker 根据 voice_id 反查 voice_refs.reference_audio_path。
-
-        ``voice_metadata``：voice 粒度元数据（worker 反查 voice_refs 注入）。
-        当前已知字段：
-          - prompt_text（参考音频转写）：GPT-SoVITS / VoxCPM 1.x 强制；
-            VoxCPM 2 可选（启用时升级到 ultimate cloning）
-          - prompt_lang（参考音频语言代码）：GPT-SoVITS 跨语种克隆必需
-          - speaker_name：用户标注，仅展示
-        Provider 应优先读 voice_metadata，找不到才 fallback 到 self.config 默认值。
+        ``voice_id``：预设 Provider（Piper）下等于 Provider 名（单模型单音色）；
+        参考音频路径已不再传入——voice cloning 整体下线后，TTS 只用预设音色。
 
         ``generation_params``：本次生成的采样/切分覆盖（来自 TTS 请求 body.generation）。
-        当前已知字段：top_k / top_p / temperature / text_split_method（GPT-SoVITS）/
-        cfg_value / inference_timesteps（VoxCPM）。Provider 优先读 generation_params，
-        找不到才 fallback 到 self.config 默认值；不识别的字段忽略。
+        Provider 应优先读 generation_params，找不到才 fallback 到 self.config 默认值；
+        不识别的字段忽略。
         """
         ...
 
     @abstractmethod
     def list_voices(self) -> list[Voice]: ...
-
-
-class CloningProvider(TtsProvider):
-    kind: ClassVar[str] = "cloning"
-
-    @abstractmethod
-    def clone_voice(
-        self,
-        reference_audio_path: str,
-        speaker_name: str | None = None,
-    ) -> str:
-        """返回 voice_id，可在 synthesize() 中复用。"""
 
 
 class SeparatorProvider(Provider):

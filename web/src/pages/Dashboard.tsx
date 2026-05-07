@@ -14,12 +14,11 @@ const { Title, Text } = Typography;
 const KIND_META: Record<JobKind, { label: string; icon: string; path: string }> = {
   asr: { label: "语音转文字", icon: "🎧", path: "/asr" },
   tts: { label: "语音合成", icon: "🔊", path: "/tts" },
-  clone: { label: "语音克隆", icon: "🎭", path: "/cloning" },
   separate: { label: "人声分离", icon: "🎸", path: "/separator" },
   video_translate: { label: "视频翻译", icon: "🎬", path: "/video-translate" },
 };
 
-const KINDS: JobKind[] = ["asr", "tts", "clone", "separate", "video_translate"];
+const KINDS: JobKind[] = ["asr", "tts", "separate", "video_translate"];
 
 export function Dashboard() {
   const sys = useSystem();

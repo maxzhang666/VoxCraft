@@ -296,9 +296,8 @@ async def speech(
                 details={"field": "input"},
             )
         provider_name = _resolve_provider_name(body.model, kind="tts")
-        # cloning Provider 也是 TtsProvider 子类（如 VoxCPM），按 model 名查询时同时接受
         p_row = business._select_provider(
-            session, kind=("tts", "cloning"), name=provider_name,
+            session, kind="tts", name=provider_name,
         )
         job_id = str(uuid.uuid4())
         now = datetime.now(UTC)

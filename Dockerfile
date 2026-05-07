@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # VoxCraft 三阶段构建（单 image 架构）
 # - Stage 1 (web-build): Node 22 构建前端
-# - Stage 2 (py-build):  Python slim + uv + 装 Python 依赖 + git clone GPT-SoVITS
+# - Stage 2 (py-build):  Python slim + uv + 装 Python 依赖
 # - Stage 3 (runtime):   Python slim + .venv + 静态资源 + 项目源码
 #
 # 单 image 架构 + reproducibility 三层措施（SOURCE_DATE_EPOCH build-arg +
@@ -32,20 +32,16 @@ FROM python:3.11-slim-bookworm AS py-build
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=0
 
-# build-essential + python3-dev：voxcpm/GPT-SoVITS 部分 transitive deps 在
-# linux+py3.11 上没有预编 wheel 需要 sdist 编译。
-# git：用于 git clone GPT-SoVITS 源码到 /opt（import-from-tree 风格，不发 PyPI）。
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      build-essential python3-dev git \
- && rm -rf /var/lib/apt/lists/*
-
+# voice cloning 整体下线后，依赖里再无 sdist-only 包（torch / torchaudio /
+# faster-whisper / piper-tts / fastapi / pydantic 全部走 PyPI cp311 wheel）。
+# build-essential + python3-dev + git 全部不再需要——py-build 阶段只剩纯 Python
+# install，省掉 ~200MB 工具链 + ~30s apt install。
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
 # uv wheel cache 走 BuildKit cache mount 持久化：layer cache miss 也能跨 build
-# 复用 wheel，不再从 PyPI 重下 ~4GB。
+# 复用 wheel，不再从 PyPI 重下数 GB。
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache \
     uv sync --frozen --no-dev --no-install-project \
@@ -54,17 +50,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache \
 # metadata，mtime 是 build 时刻。touch 到 epoch 0 让 mtime 稳定，配合
 # workflow 的 SOURCE_DATE_EPOCH=1 + outputs rewrite-timestamp=true，layer
 # blob 跨 build 字节级 reproducible。
-
-# GPT-SoVITS：仓库无 PyPI 包，git clone 到 /opt + runtime PYTHONPATH 注入。
-# rm -rf .git 清 git 元数据；rm -rf GPT_SoVITS/pretrained_models 清掉
-# .gitignore 占位文件，让 runtime Provider 能 symlink 该路径到 user model_dir。
-ARG GPT_SOVITS_COMMIT=ea2d2a81667239d37615697e8f0056e35bab2db6
-RUN git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS.git /opt/GPT-SoVITS \
- && cd /opt/GPT-SoVITS \
- && git fetch --depth 1 origin "$GPT_SOVITS_COMMIT" \
- && git checkout "$GPT_SOVITS_COMMIT" \
- && rm -rf .git GPT_SoVITS/pretrained_models \
- && find /opt/GPT-SoVITS \( -type f -o -type d \) -exec touch -h -d @0 {} +
 
 # 源码 + 配置仅复制不安装；项目代码靠 runtime PYTHONPATH=/app/src 加载
 COPY src ./src
@@ -94,18 +79,10 @@ COPY --from=py-build /app/.venv /app/.venv
 COPY --from=py-build /app/src /app/src
 COPY --from=py-build /app/migrations /app/migrations
 COPY --from=py-build /app/alembic.ini /app/alembic.ini
-COPY --from=py-build /opt/GPT-SoVITS /opt/GPT-SoVITS
 COPY --from=web-build /web/dist ./static
 
-# Runtime ENV 一律放 COPY 之后：调整 ENV（PYTHONPATH / TORCHDYNAMO_DISABLE）
-# 不应让 .venv layer cache 失效。新加 ENV 一律在此追加。
-# - PYTHONPATH: /app/src 项目代码 + /opt/GPT-SoVITS 仓库根（默认 cwd）
-#   + /opt/GPT-SoVITS/GPT_SoVITS（GPT-SoVITS 用扁平 import：from AR.* /
-#   from module.* / from TTS_infer_pack.* import ...，需要这层在 sys.path）
-# - TORCHDYNAMO_DISABLE=1: voxcpm 内部 torch.compile 在 dynamo trace einops 0.8.2
-#   的 unbound builtin 调用时挂；进程级 kill switch 让 dynamo 全程不 trace
-ENV PYTHONPATH=/app/src:/opt/GPT-SoVITS:/opt/GPT-SoVITS/GPT_SoVITS \
-    TORCHDYNAMO_DISABLE=1
+# Runtime ENV 一律放 COPY 之后：调整 ENV 不应让 .venv layer cache 失效。
+ENV PYTHONPATH=/app/src
 
 EXPOSE 8001
 

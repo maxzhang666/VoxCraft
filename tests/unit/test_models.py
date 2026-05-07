@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from voxcraft.db.models import AppSetting, Job, LlmProvider, Model, Provider, VoiceRef
+from voxcraft.db.models import AppSetting, Job, LlmProvider, Model, Provider
 
 
 @pytest.fixture
@@ -75,21 +75,6 @@ def test_job_lifecycle(session):
     assert found.output_extras is None
 
 
-def test_voice_ref_crud(session):
-    session.add(
-        VoiceRef(
-            id="vx_abc",
-            speaker_name="张三",
-            reference_audio_path="/data/refs/abc.wav",
-            provider_name="voxcpm-clone",
-        )
-    )
-    session.commit()
-    v = session.get(VoiceRef, "vx_abc")
-    assert v is not None
-    assert v.speaker_name == "张三"
-
-
 def test_app_setting_json_value(session):
     session.add(AppSetting(key="job_timeout", value={"seconds": 600}))
     session.commit()
@@ -121,9 +106,9 @@ def test_model_crud(session):
 
 
 def test_model_catalog_key_unique(session):
-    session.add(Model(catalog_key="voxcpm", source="hf", repo_id="x", kind="cloning"))
+    session.add(Model(catalog_key="piper-zh", source="hf", repo_id="x", kind="tts"))
     session.commit()
-    session.add(Model(catalog_key="voxcpm", source="ms", repo_id="y", kind="cloning"))
+    session.add(Model(catalog_key="piper-zh", source="ms", repo_id="y", kind="tts"))
     with pytest.raises(IntegrityError):
         session.commit()
 

@@ -60,8 +60,8 @@ def test_scan_is_idempotent(engine, tmp_path):
 
     models_dir = tmp_path / "models"
     models_dir.mkdir()
-    (models_dir / "voxcpm").mkdir()
-    (models_dir / "voxcpm" / "config.json").write_text("{}")
+    (models_dir / "custom-model").mkdir()
+    (models_dir / "custom-model" / "config.json").write_text("{}")
 
     first = scan_existing_models(engine)
     second = scan_existing_models(engine)
