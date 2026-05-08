@@ -124,14 +124,6 @@ class AsrProvider(Provider):
 class TtsProvider(Provider):
     kind: ClassVar[str] = "tts"
 
-    def __init__(self, name: str, config: dict) -> None:
-        super().__init__(name, config)
-        # 最近一次 synthesize 的可观测元数据：resolved 后的实际输入（含来源归属）+
-        # 参考音频时长 + 输出音频时长 + sample rate 等。Provider 实现按需填，
-        # worker 读出后合入 JobResult.result["synthesis_debug"]，前端任务详情直接展示。
-        # 不填即 None；老 Provider 不破坏。
-        self.last_synthesis_debug: dict | None = None
-
     @abstractmethod
     def synthesize(
         self,
@@ -139,16 +131,11 @@ class TtsProvider(Provider):
         voice_id: str,
         speed: float = 1.0,
         format: str = "wav",
-        generation_params: dict | None = None,
     ) -> bytes:
         """返回合成后的音频字节。
 
-        ``voice_id``：预设 Provider（Piper）下等于 Provider 名（单模型单音色）；
-        参考音频路径已不再传入——voice cloning 整体下线后，TTS 只用预设音色。
-
-        ``generation_params``：本次生成的采样/切分覆盖（来自 TTS 请求 body.generation）。
-        Provider 应优先读 generation_params，找不到才 fallback 到 self.config 默认值；
-        不识别的字段忽略。
+        ``voice_id``：预设 Provider（Piper）下等于 Provider 名（单模型单音色）。
+        cloning 整体下线后 TTS 只走预设音色，不再有 reference / 采样参数。
         """
         ...
 

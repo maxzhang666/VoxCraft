@@ -203,21 +203,13 @@ def _run_tts(req: JobRequest, inst) -> JobResult:
     voice_id = meta["voice_id"]
     speed = meta.get("speed", 1.0)
     fmt = meta.get("format", "wav")
-    generation = meta.get("generation") or {}
-    audio = inst.synthesize(
-        text, voice_id=voice_id, speed=speed, format=fmt,
-        generation_params=generation,
-    )
+    audio = inst.synthesize(text, voice_id=voice_id, speed=speed, format=fmt)
 
     suffix = {"wav": ".wav", "mp3": ".mp3", "ogg": ".ogg"}[fmt]
     out = Path(req.output_dir) / f"{req.job_id}{suffix}"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(audio)
-    # Provider 实现可在 synthesize 内填充 last_synthesis_debug。worker 把它塞进
-    # JobResult.result，前端任务详情的 JsonViewer 会原样展示。
-    debug = getattr(inst, "last_synthesis_debug", None)
-    result_dict = {"synthesis_debug": debug} if debug else None
-    return JobResult(ok=True, output_path=str(out), result=result_dict)
+    return JobResult(ok=True, output_path=str(out))
 
 
 def _run_separate(req: JobRequest, inst) -> JobResult:

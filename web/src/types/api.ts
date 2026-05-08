@@ -110,29 +110,7 @@ export interface Voice {
   gender?: string | null;
   sample_url?: string | null;
   provider_name: string;
-  source: "preset" | "cloned";
-}
-
-/** 每次 TTS 合成可调的采样/切分参数；不传走 Provider 默认值。
- *
- * 注意：参考音频语言（prompt_lang）不在这里——它是参考音频本身的语种，由抽取
- * 声纹时 ASR 自动检测，跟用户每次合成的目标输出无关。
- */
-export interface TtsGenerationParams {
-  /** 采样 top_k（GPT-SoVITS） */
-  top_k?: number;
-  /** 采样 top_p（GPT-SoVITS） */
-  top_p?: number;
-  /** 采样温度（GPT-SoVITS） */
-  temperature?: number;
-  /** 文本切分方式（GPT-SoVITS）：cut0/cut1/.../cut5 */
-  text_split_method?: string;
-  /** 目标语言（GPT-SoVITS）：zh/en/ja/ko/yue。同一个 voice 可输出不同目标语言 */
-  text_lang?: string;
-  /** CFG 引导强度（VoxCPM） */
-  cfg_value?: number;
-  /** 推理步数（VoxCPM） */
-  inference_timesteps?: number;
+  source: "preset";
 }
 
 export interface SseEvent<P = Record<string, unknown>> {

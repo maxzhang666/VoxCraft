@@ -66,7 +66,6 @@ class InMemoryMockTtsProvider(TtsProvider):
 
     def synthesize(
         self, text: str, voice_id: str, speed: float = 1.0, format: str = "wav",
-        generation_params: dict | None = None,  # noqa: ARG002 — mock 忽略
     ) -> bytes:
         return b"RIFF....WAVEmock"
 

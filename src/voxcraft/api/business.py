@@ -197,8 +197,6 @@ async def submit_tts(
                 "voice_id": body.voice_id,
                 "speed": body.speed,
                 "format": body.format,
-                # generation：本次合成的采样/切分覆盖；为空则 Provider 走默认
-                "generation": body.generation.model_dump(exclude_none=True) if body.generation else {},
             },
             progress=0.0, created_at=now,
         )
