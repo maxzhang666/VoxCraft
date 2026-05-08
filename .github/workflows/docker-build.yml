@@ -3,7 +3,10 @@ name: Build & Push Docker Image
 # 触发规则：
 # - push 到 master：构建并推送 latest / master / sha-<short>
 # - tag v*.*.*：构建并推送语义版本
-# - PR：仅构建验证，不推送
+# - PR（默认）：仅构建验证，不推送
+# - PR 贴上 `build-image` 标签：构建并推送 pr-<N> / sha-<short>，方便不合并主干
+#   的情况下拉镜像在服务器上测试。摘掉标签不会回滚镜像（已 push 的版本不变）；
+#   下次 commit 触发的是 synchronize 事件，仍按当前 label 状态决定是否 push。
 # 单 image 架构（之前尝试过 base+app 拆分，CI 时间从 3min 涨到 15min，回滚）。
 # 关键是 reproducibility 三层措施：
 # 1. SOURCE_DATE_EPOCH=1 build-arg：build 内部工具（uv/pip）尊重固定时间戳
@@ -28,6 +31,9 @@ on:
       - ".dockerignore"
   pull_request:
     branches: [master]
+    # labeled 进队列让"贴 build-image 标签"成为推送镜像的触发器；不加 label
+    # 的常规 PR 仍按 opened/synchronize/reopened 走仅构建验证路径。
+    types: [opened, synchronize, reopened, labeled]
     paths-ignore:
       - "docs/**"
       - "**.md"
@@ -47,6 +53,14 @@ concurrency:
 
 jobs:
   build-and-push:
+    # 当 GitHub 触发的是"加 label / 删 label"事件时，只对 build-image 这个标签
+    # 反应——其他业务标签（如 needs-review / question）不浪费一次 ~3min 构建。
+    # 非 labeled 事件（push / PR opened / synchronize / workflow_dispatch / tag）
+    # 始终运行，由下面 gate 步骤决定 push or 仅构建。
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'build-image'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -62,8 +76,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Decide whether to push the image
+        # push 到 master / tag v* → push=true（一直如此）
+        # PR 上贴了 build-image 标签 → push=true（这次新增）
+        # 普通 PR → push=false（仅构建验证）
+        id: gate
+        env:
+          HAS_BUILD_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'build-image') }}
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            push="$HAS_BUILD_LABEL"
+          else
+            push="true"
+          fi
+          echo "push=$push" >> "$GITHUB_OUTPUT"
+          echo "::notice title=push-decision::push=$push (event=${{ github.event_name }} action=${{ github.event.action }})"
+
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: steps.gate.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -91,7 +121,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=docker
-          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=docker,mode=max' || '' }}
+          # 只有真要 push 镜像时才写 cache（mode=max 写所有中间层 ~3min 额外开销）。
+          # 仅构建验证的 PR 不写 cache，省时间——读 cache 仍照常。
+          cache-to: ${{ steps.gate.outputs.push == 'true' && 'type=gha,scope=docker,mode=max' || '' }}
           provenance: false
           # Reproducible build 三层措施（缺一不可——之前砍掉第三层后 client
           # 立刻报"又重下 3.8GB"，证伪了"前两层已经够"的乐观判断）：
@@ -111,4 +143,4 @@ jobs:
           build-args: |
             SOURCE_DATE_EPOCH=1
           outputs: |
-            type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true
+            type=image,push=${{ steps.gate.outputs.push == 'true' }},rewrite-timestamp=true
