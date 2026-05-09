@@ -1,14 +1,24 @@
 # syntax=docker/dockerfile:1.7
-# VoxCraft 三阶段构建（单 image 架构）
+# VoxCraft 两阶段构建（cloning 已下线，py-build 不再必要）
 # - Stage 1 (web-build): Node 22 构建前端
-# - Stage 2 (py-build):  Python slim + uv + 装 Python 依赖
-# - Stage 3 (runtime):   Python slim + .venv + 静态资源 + 项目源码
+# - Stage 2 (runtime):   Python slim 直接装依赖；分三层让 torch ~3GB 独立成一个
+#                         跨 build 稳定的 layer，业务代码改动只产生 ~15MB 新 layer
 #
 # 单 image 架构 + reproducibility 三层措施（SOURCE_DATE_EPOCH build-arg +
 # Dockerfile mtime touch + workflow outputs rewrite-timestamp=true）让 layer
-# blob 跨 build 字节稳定。pyproject/uv.lock 不变时：
-# - CI 全 cache 命中 ~3 min
-# - client docker pull 全 layer Already exists，0 字节下载
+# blob 跨 build 字节稳定，CI cache 与 client docker pull 都能精准命中。
+#
+# 镜像分层（从底到上、跨 build 稳定度从高到低）：
+#   ① python:3.11-slim-bookworm + apt deps (ffmpeg/libsndfile/CJK 字体) ≈ 350MB
+#   ② torch + torchaudio + nvidia-cu12-* + triton                       ≈ 3GB
+#   ③ 项目其余 Python 依赖（fastapi / faster-whisper / piper / demucs / ...）≈ 150MB
+#   ④ 项目源码 + migrations + 静态前端                                   ≈ 15MB
+#
+# 客户端 docker pull 增量逻辑：
+# - 第一次：3.5GB 全下
+# - 仅业务代码改动：只下层 ④ ~15MB
+# - 改 pyproject（不动 torch）：下层 ③+④ ~150MB
+# - 升 torch（罕见）：下层 ②+③+④ 全重下
 
 # -------- Stage 1: Web build --------
 FROM node:22-alpine AS web-build
@@ -22,48 +32,23 @@ RUN pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-# -------- Stage 2: Python build --------
-FROM python:3.11-slim-bookworm AS py-build
 
-# UV_COMPILE_BYTECODE=0：不让 uv 预编译 .pyc。原因：.pyc 头部嵌入 source mtime，
-# 而 source mtime 来自 docker COPY 时刻——每次构建都不同，让 .venv 字节漂移。
-# 容器首次 import 时 Python 会 lazy 编译 .py → __pycache__，长驻 uvicorn 仅
-# 冷启动多 1-2s。
-ENV UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=0
-
-# voice cloning 整体下线后，依赖里再无 sdist-only 包（torch / torchaudio /
-# faster-whisper / piper-tts / fastapi / pydantic 全部走 PyPI cp311 wheel）。
-# build-essential + python3-dev + git 全部不再需要——py-build 阶段只剩纯 Python
-# install，省掉 ~200MB 工具链 + ~30s apt install。
-COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /usr/local/bin/
-
-WORKDIR /app
-
-# uv wheel cache 走 BuildKit cache mount 持久化：layer cache miss 也能跨 build
-# 复用 wheel，不再从 PyPI 重下数 GB。
-COPY pyproject.toml uv.lock README.md ./
-RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache \
-    uv sync --frozen --no-dev --no-install-project \
- && find /app/.venv \( -type f -o -type d \) -exec touch -h -d @0 {} +
-# Reproducible .venv：uv sync 在 wheel install 时写 *.dist-info/INSTALLER 等
-# metadata，mtime 是 build 时刻。touch 到 epoch 0 让 mtime 稳定，配合
-# workflow 的 SOURCE_DATE_EPOCH=1 + outputs rewrite-timestamp=true，layer
-# blob 跨 build 字节级 reproducible。
-
-# 源码 + 配置仅复制不安装；项目代码靠 runtime PYTHONPATH=/app/src 加载
-COPY src ./src
-COPY alembic.ini ./
-COPY migrations ./migrations
-
-# -------- Stage 3: Runtime --------
+# -------- Stage 2: Runtime --------
 FROM python:3.11-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH=/app/src \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=0
+
+# UV_COMPILE_BYTECODE=0：不让 uv 预编译 .pyc。原因：.pyc 头部嵌入 source mtime，
+# 而 source mtime 来自 docker COPY 时刻——每次构建都不同，让 .venv 字节漂移。
+# 容器首次 import 时 Python 会 lazy 编译 .py → __pycache__，长驻 uvicorn 仅
+# 冷启动多 1-2s。
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -72,17 +57,39 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# 拆分 COPY 让 .venv 与 src 各成 layer：.venv 仅 pyproject/uv.lock 改动时变，
-# src 每次代码改动重做（仅 ~10MB）。py-build 与 runtime 共用 python:3.11-slim，
-# venv shebang /usr/local/bin/python3.11 在两阶段一致。
-COPY --from=py-build /app/.venv /app/.venv
-COPY --from=py-build /app/src /app/src
-COPY --from=py-build /app/migrations /app/migrations
-COPY --from=py-build /app/alembic.ini /app/alembic.ini
-COPY --from=web-build /web/dist ./static
+# === Layer ②：torch + CUDA runtime（~3GB，跨 build 稳定）===
+# uv 用 bind mount 形式注入，install 完后 uv 二进制不留在镜像里。
+# torch 版本通过 ARG 锁——pyproject 与本行必须保持一致；pyproject 升 torch 时
+# 同步改这里，否则 layer ③ 的 uv sync 会把新 torch 整套重装到 ③ 里，layer ②
+# 就白做了。当前与 uv.lock 一致：torch 2.6.0 / torchaudio 2.6.0。
+ARG TORCH_VERSION=2.6.0
+ARG TORCHAUDIO_VERSION=2.6.0
+RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache \
+    --mount=type=bind,from=ghcr.io/astral-sh/uv:0.5,source=/uv,target=/usr/local/bin/uv \
+    uv venv /app/.venv \
+ && uv pip install --python /app/.venv/bin/python \
+      "torch==${TORCH_VERSION}" "torchaudio==${TORCHAUDIO_VERSION}" \
+ && find /app/.venv \( -type f -o -type d \) -exec touch -h -d @0 {} +
 
-# Runtime ENV 一律放 COPY 之后：调整 ENV 不应让 .venv layer cache 失效。
-ENV PYTHONPATH=/app/src
+# === Layer ③：项目其余 Python 依赖（~150MB）===
+# uv sync --frozen 会照 lockfile 校验已装 torch 的版本，匹配则跳过；只把 fastapi
+# / pydantic / faster-whisper / piper / demucs 等装进 .venv。任何 pyproject /
+# uv.lock 改动都让这一层失效但不波及 layer ②。
+COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache \
+    --mount=type=bind,from=ghcr.io/astral-sh/uv:0.5,source=/uv,target=/usr/local/bin/uv \
+    uv sync --frozen --no-dev --no-install-project \
+ && find /app/.venv \( -type f -o -type d \) -exec touch -h -d @0 {} +
+# Reproducible .venv：uv sync 在 wheel install 时写 *.dist-info/INSTALLER 等
+# metadata，mtime 是 build 时刻。touch 到 epoch 0 让 mtime 稳定，配合
+# workflow 的 SOURCE_DATE_EPOCH=1 + outputs rewrite-timestamp=true，layer
+# blob 跨 build 字节级 reproducible。
+
+# === Layer ④：源码 + 迁移 + 静态前端（~15MB，每次代码改动重做）===
+COPY src ./src
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY --from=web-build /web/dist ./static
 
 EXPOSE 8001
 
