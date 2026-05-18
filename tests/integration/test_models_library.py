@@ -35,16 +35,15 @@ def _wait_ready(client, model_id: int, timeout_s: float = 3.0):
     raise AssertionError("model did not reach terminal state within timeout")
 
 
-def test_list_returns_nine_builtin_entries(client):
+def test_list_returns_seven_builtin_entries(client):
     r = client.get("/api/admin/models-library")
     assert r.status_code == 200
     data = r.json()
     builtins = [v for v in data if v["is_builtin"]]
-    # Whisper 4 + Moonshine 2 + Piper 2 + Demucs 1 = 9
-    assert len(builtins) == 9
+    # Whisper 4 + Piper 2 + Demucs 1 = 7（Moonshine 库自管，不进 catalog）
+    assert len(builtins) == 7
     keys = {v["catalog_key"] for v in builtins}
     assert "whisper-tiny" in keys
-    assert "moonshine-base" in keys
     assert "demucs-htdemucs" in keys
     # 默认未下载
     for v in builtins:

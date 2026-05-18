@@ -83,34 +83,14 @@ CATALOG: list[CatalogEntry] = [
         provider_class="WhisperProvider",
         mirror_authority="community",
     ),
-    # Moonshine：边缘端低延迟 ASR；模型小 6× / CPU 即可 100ms 级。语种特化版
-    # 中文/日文质量好于通用 base。首次使用由 useful-moonshine-onnx 自动从 HF
-    # 拉到 HF_HOME 缓存；catalog 里挂 HF 源主要是让"模型库"页面能预下载，避免
-    # 第一次 transcribe 在线程里阻塞下载。
-    CatalogEntry(
-        key="moonshine-tiny",
-        label="Moonshine Tiny (~27M)",
-        kind="asr",
-        sources={
-            "hf": "UsefulSensors/moonshine-tiny",
-        },
-        size_mb=110,
-        recommend_tier="entry",
-        provider_class="MoonshineProvider",
-        mirror_authority="official",
-    ),
-    CatalogEntry(
-        key="moonshine-base",
-        label="Moonshine Base (~61M)",
-        kind="asr",
-        sources={
-            "hf": "UsefulSensors/moonshine-base",
-        },
-        size_mb=240,
-        recommend_tier="entry",
-        provider_class="MoonshineProvider",
-        mirror_authority="official",
-    ),
+    # Moonshine 不进 catalog：useful-moonshine-onnx 库自管模型下载（按 model_name
+    # 字符串走 huggingface_hub 默认 cache，~/.cache/huggingface/hub）。VoxCraft 的
+    # download_hf 是 `snapshot_download(repo_id, local_dir=<models_dir>/<key>)` 模式，
+    # 绕过默认 cache，两条路径不共享存储。强行挂 catalog 条目反而误导用户
+    # ——"下载"按钮看似成功，第一次 transcribe 时 Moonshine 仍然要从另一处再下
+    # 一遍。所以把 model 生命周期完全交给 Moonshine 库，用户只需在 Provider
+    # 配置里填 model_name（如 "moonshine/base"）即可，首次推理会触发自动下载。
+
     # ---------- TTS (Piper) ----------
     CatalogEntry(
         key="piper-zh-huayan-medium",

@@ -1,32 +1,41 @@
 """Moonshine（moonshine-ai/moonshine）ONNX 后端的 AsrProvider 实现。
 
-Moonshine 是一组为"短音频 + 低延迟"优化的 ASR 模型：
-- 参数量比 Whisper 同档小 6×（tiny 27M / base 61M），ONNX 后端 CPU 即可 <300ms 出结果
-- 输入长度可变（不像 Whisper 强制 30s 窗口），短音频不浪费算力
-- 多语种特化模型：英语为主仓库 + 中文 / 日文 / 韩文 等小语种独立仓库
+Moonshine 是一组为"短音频 + 低延迟"优化的 ASR 模型：参数比同档 Whisper 小 6×、
+ONNX 后端 CPU 即可 <300ms 出结果、输入长度可变（无 30s 窗口浪费）。
 
-设计取舍：
-- **不提供 segment 级时间戳**。Moonshine 推理 API 返回的是平铺文本字符串列表，
-  没有 Whisper 那种 segment.start/segment.end。VoxCraft AsrResult 契约要求
-  segments，所以这里把整段输出包成单个 segment[0, duration]——足够支撑
-  /api/asr 的纯文本转写场景；video_translate 字幕对齐需要细粒度时间戳，那条
-  路径仍应优先选 Whisper。这是 Moonshine 自身设计取舍，不是本 Provider 限制。
-- **模型按名加载（"moonshine/base"），下载落 HF 缓存**。useful-moonshine-onnx
-  内部走 huggingface_hub.snapshot_download；只要 HF_HOME 指向 VoxCraft 数据目录
-  （默认环境已配），后续 docker 重启不会重下。VoxCraft 模型库里如果想统一管
-  Moonshine 的下载，需要后续把对应 HF repo 加进 catalog，本 Provider 不强依赖。
-- **ONNX runtime 后端选择**：装了 onnxruntime-gpu 自动用 CUDAExecutionProvider；
-  否则走 CPUExecutionProvider。Pascal sm_61（P104）在 CUDA 12 + cuDNN 9 上仍受
-  支持，但 Moonshine 模型小到 CPU 都跑得动——多数场景不强求 GPU。
+集成边界 & 已知限制（实事求是）：
+
+1) **无 segment 级时间戳**。useful-moonshine-onnx.transcribe() 返回平铺文本，
+   没有 segment.start/end。本 Provider 把整段输出包成单 segment [0, duration]
+   满足 AsrResult 契约；够 /api/asr 纯文本场景。video_translate 字幕对齐需要
+   细粒度时间戳，那条路径仍应优先选 Whisper——上游设计如此，非本 Provider 限制。
+
+2) **模型不进 VoxCraft 模型管理**。useful-moonshine-onnx 库自管下载：按
+   model_name 字符串走 huggingface_hub 默认 cache（~/.cache/huggingface/hub）。
+   VoxCraft 自己的 download_hf 用 `snapshot_download(local_dir=...)` 绕过默认
+   cache，**两条路径不共享存储**——硬挂 catalog 条目会让用户以为"已下载"，但
+   第一次 transcribe 时 Moonshine 仍要从默认 cache 再下一遍。所以保持现状：
+   首次 transcribe 触发自动下载，重启容器只要 HF_HOME 持久就不会重下。
+   想抢占式预热的话，进容器 `python -c "import moonshine_onnx as m; m.transcribe(...)"`
+   手动跑一遍小音频即可。
+
+3) **ExecutionProvider 选择是只读的**。useful-moonshine-onnx.transcribe() 的
+   高层 API **不接受 providers 参数**——内部走默认 InferenceSession，pip 装了
+   onnxruntime-gpu 就自动 CUDA EP，没装就 CPU EP。本 Provider 的 `device`
+   config 只做 **assertion**（device='cuda' 但 CUDA EP 不可用 → load 时 raise，
+   避免运行到一半才崩），不能像 WhisperProvider 那样真正切换设备。这意味着：
+   - 想强制 CPU 跑 → 镜像里别装 onnxruntime-gpu（当前 pyproject 装了，所以不可控）
+   - 想强制 CUDA 跑 → 装 onnxruntime-gpu 即可，库自动用
+   - device='auto' 是当前行为的描述，不是控制开关
+   future：如果上游暴露 `providers=` kwarg 或我们直接调下层 InferenceSession，
+   再补回完整控制。
 
 Config 字段：
-- model_name: enum  "moonshine/tiny" / "moonshine/base"（默认 base，多语 → 中文用
-  language=zh）。专门的语种特化模型如 "moonshine/tiny-ko" 也可填入字符串
-- language: str     ISO 语种码（zh/en/...）。Moonshine 多数模型多语，language 只
-  做结果元数据；语种特化模型由 model_name 决定行为
-- device: enum      "auto"/"cpu"/"cuda"；auto 优先 CUDA EP，缺则 CPU
-- max_tokens_per_second: float  非拉丁字母（中文 / 日文）建议 13.0；默认走库
-  内置（英文 6.5）。CONFIG_SCHEMA 暴露为可调
+- model_name: enum   "moonshine/tiny" / "moonshine/base" + 语种特化（zh/ja/ko），
+                      也可手动改 DB 写其他 model_name 字符串。首次推理触发自动下载
+- language:  str     ISO 语种码（en/zh/...），只做结果元数据；具体语种由 model_name 决定
+- device:    enum    "auto"/"cpu"/"cuda"——见上 3) 的限制
+- max_tokens_per_second: float   CJK 建议 13.0；英文场景库默认 6.5；留空跟库默认
 """
 from __future__ import annotations
 
