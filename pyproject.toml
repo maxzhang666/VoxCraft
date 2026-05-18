@@ -19,6 +19,14 @@ dependencies = [
     "python-multipart>=0.0.12",
     "python-dotenv>=1.0",
     "faster-whisper>=1.0",
+    # Moonshine：边缘端低延迟 ASR，ONNX 后端。useful-moonshine-onnx 上游会
+    # 拉入 onnxruntime（CPU EP）；GPU EP 由下面 onnxruntime-gpu 提供，运行时
+    # 优先级在 MoonshineProvider._resolve_providers 里手动指定
+    "useful-moonshine-onnx>=20251101",
+    # onnxruntime-gpu 提供 CUDAExecutionProvider；与 onnxruntime（CPU）安装路径
+    # 不冲突，pip 视为两个独立包，但 import onnxruntime 时只有一个生效——
+    # onnxruntime-gpu 自带 CPU EP，所以装它单个即可
+    "onnxruntime-gpu>=1.17",
     "piper-tts>=1.4.2",
     # modelscope：项目用 snapshot_download 拉模型镜像（CN 用户首选源）
     "modelscope>=1.27,<2",

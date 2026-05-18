@@ -83,6 +83,34 @@ CATALOG: list[CatalogEntry] = [
         provider_class="WhisperProvider",
         mirror_authority="community",
     ),
+    # Moonshine：边缘端低延迟 ASR；模型小 6× / CPU 即可 100ms 级。语种特化版
+    # 中文/日文质量好于通用 base。首次使用由 useful-moonshine-onnx 自动从 HF
+    # 拉到 HF_HOME 缓存；catalog 里挂 HF 源主要是让"模型库"页面能预下载，避免
+    # 第一次 transcribe 在线程里阻塞下载。
+    CatalogEntry(
+        key="moonshine-tiny",
+        label="Moonshine Tiny (~27M)",
+        kind="asr",
+        sources={
+            "hf": "UsefulSensors/moonshine-tiny",
+        },
+        size_mb=110,
+        recommend_tier="entry",
+        provider_class="MoonshineProvider",
+        mirror_authority="official",
+    ),
+    CatalogEntry(
+        key="moonshine-base",
+        label="Moonshine Base (~61M)",
+        kind="asr",
+        sources={
+            "hf": "UsefulSensors/moonshine-base",
+        },
+        size_mb=240,
+        recommend_tier="entry",
+        provider_class="MoonshineProvider",
+        mirror_authority="official",
+    ),
     # ---------- TTS (Piper) ----------
     CatalogEntry(
         key="piper-zh-huayan-medium",

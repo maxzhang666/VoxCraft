@@ -12,9 +12,10 @@ from voxcraft.models_lib.catalog import (
 )
 
 
-def test_catalog_has_seven_entries():
-    # cloning 整体下线后剩：Whisper 3 + Piper 3 + Demucs 1
-    assert len(CATALOG) == 7
+def test_catalog_has_nine_entries():
+    # Whisper 4 (tiny/small/medium/large-v3) + Moonshine 2 (tiny/base)
+    # + Piper 2 + Demucs 1
+    assert len(CATALOG) == 9
 
 
 def test_catalog_keys_unique():
@@ -65,7 +66,12 @@ def test_catalog_no_cloning_entries():
 
 
 def test_ms_sources_for_cn_users():
-    """国内用户依赖 ModelScope 镜像，至少 Whisper 要有 ms 源。"""
+    """国内用户依赖 ModelScope 镜像。Whisper 系列必须有 ms 源（大模型）。
+
+    Moonshine 系列暂时没有官方 ModelScope 镜像（上游也没发），但模型小
+    （tiny ~110MB / base ~240MB），国内用户可通过 HF_ENDPOINT=https://hf-mirror.com
+    走 HF 镜像快速下载——不强求 ms 源。
+    """
     for e in CATALOG:
-        if e.kind == "asr":
+        if e.kind == "asr" and not e.key.startswith("moonshine-"):
             assert "ms" in e.sources or "url" in e.sources, f"{e.key} lacks CN-friendly source"

@@ -6,6 +6,7 @@ Mock Provider 不登记（测试通过 monkeypatch 注入，见 providers.md）�
 from __future__ import annotations
 
 from voxcraft.errors import ProviderError
+from voxcraft.providers.asr.moonshine import MoonshineProvider
 from voxcraft.providers.asr.whisper import WhisperProvider
 from voxcraft.providers.base import Provider
 from voxcraft.providers.separator.demucs import DemucsProvider
@@ -14,6 +15,7 @@ from voxcraft.providers.tts.piper import PiperProvider
 
 PROVIDER_REGISTRY: dict[str, type[Provider]] = {
     "WhisperProvider": WhisperProvider,
+    "MoonshineProvider": MoonshineProvider,
     "PiperProvider": PiperProvider,
     "DemucsProvider": DemucsProvider,
     # OpenAiCompatProvider（翻译，v0.5+）
