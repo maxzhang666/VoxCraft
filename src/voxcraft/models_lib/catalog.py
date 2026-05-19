@@ -83,30 +83,10 @@ CATALOG: list[CatalogEntry] = [
         provider_class="WhisperProvider",
         mirror_authority="community",
     ),
-    # Moonshine：useful-moonshine-onnx 库从单个 repo `UsefulSensors/moonshine`
-    # 加载，内部按 model_name（"moonshine/tiny" / "moonshine/base"）映射到该 repo
-    # 下的 `onnx/<size>/` 子目录。所以 catalog 只放一条 entry：用户下载一次同时
-    # 拿到 tiny + base 两个 size，Provider config 里改 model_name 即可切。
-    #
-    # 注意：本条 entry 的下载落 VoxCraft 的 `<models_dir>/moonshine/`，**默认不**
-    # 同步进 ~/.cache/huggingface/hub（local_dir 模式绕过 HF 缓存）。想让 Moonshine
-    # 库运行时复用这份下载、避免第一次推理再下一遍，**容器启动时设
-    # HF_HOME=<models_dir>**（或 docker-compose env 里挂同一卷），库会改从该路径
-    # 读 HF cache。否则首次 transcribe 会触发一次额外下载到 ~/.cache，本条 entry
-    # 仍然有"模型库可见 + 手动备份"价值。
-    CatalogEntry(
-        key="moonshine",
-        label="Moonshine（含 tiny + base 两个 size）",
-        kind="asr",
-        sources={
-            "hf": "UsefulSensors/moonshine",
-        },
-        # tiny ONNX ~110MB + base ONNX ~240MB + safetensors ~350MB + tokenizer 等
-        size_mb=700,
-        recommend_tier="entry",
-        provider_class="MoonshineProvider",
-        mirror_authority="official",
-    ),
+    # Moonshine v2（moonshine-voice）不进 catalog：每个语种是独立模型，由库内部
+    # 的 get_model_for_language(lang) 按需从 HF 拉到 HF_HOME。语种切换 = 拉新模型，
+    # 不像 Whisper 一个模型多语种通吃。预热某个语种的话，进容器跑：
+    #   python -c "from moonshine_voice import get_model_for_language as g; g('mandarin')"
 
     # ---------- TTS (Piper) ----------
     CatalogEntry(

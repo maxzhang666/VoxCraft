@@ -12,9 +12,9 @@ from voxcraft.models_lib.catalog import (
 )
 
 
-def test_catalog_has_eight_entries():
-    # Whisper 4 + Moonshine 1（统一 repo）+ Piper 2 + Demucs 1 = 8
-    assert len(CATALOG) == 8
+def test_catalog_has_seven_entries():
+    # Moonshine v2 按语种动态拉模型，不进 catalog。剩：Whisper 4 + Piper 2 + Demucs 1
+    assert len(CATALOG) == 7
 
 
 def test_catalog_keys_unique():
@@ -65,11 +65,7 @@ def test_catalog_no_cloning_entries():
 
 
 def test_ms_sources_for_cn_users():
-    """国内用户依赖 ModelScope 镜像。Whisper 系列必须有 ms 源（模型大，HF 直连慢）。
-
-    Moonshine 暂时没有官方 ModelScope 镜像，但 repo 总共 ~700MB，CN 用户可通过
-    HF_ENDPOINT=https://hf-mirror.com 走 HF 镜像快速下载——不强求 ms 源。
-    """
+    """国内用户依赖 ModelScope 镜像，至少 Whisper 要有 ms 源。"""
     for e in CATALOG:
-        if e.kind == "asr" and e.key != "moonshine":
+        if e.kind == "asr":
             assert "ms" in e.sources or "url" in e.sources, f"{e.key} lacks CN-friendly source"

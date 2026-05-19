@@ -185,10 +185,10 @@ def test_mvp_smoke_models_library_flow(client, monkeypatch):
     monkeypatch.setattr(svc_mod, "download_hf", _fake)
     monkeypatch.setattr(svc_mod, "download_ms", _fake)
 
-    # 1. catalog 列表含 8 内置（Whisper 4 + Moonshine 1 + Piper 2 + Demucs 1）
+    # 1. catalog 列表含 7 内置（Whisper 4 + Piper 2 + Demucs 1）
     entries = client.get("/api/admin/models-library").json()
     builtins = [e for e in entries if e["is_builtin"]]
-    assert len(builtins) == 8
+    assert len(builtins) == 7
 
     # 2. 下载 whisper-tiny
     r = client.post("/api/admin/models-library/whisper-tiny/download")

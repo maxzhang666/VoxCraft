@@ -1,9 +1,14 @@
-"""MoonshineProvider 单元测试（mock moonshine_onnx，不实际下载模型）。"""
+"""MoonshineProvider 单元测试（mock moonshine_voice 的 batch API）。
+
+聚焦：load 流程、language 校验、batch 转写、WAV / 非 WAV 输入、错误透传。
+不真下载模型，不真跑 ONNX 推理。
+"""
 from __future__ import annotations
 
 import sys
-from types import ModuleType
+import wave
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -12,23 +17,68 @@ from voxcraft.providers.asr.moonshine import MoonshineProvider
 
 
 @pytest.fixture
-def mock_moonshine(monkeypatch):
-    """注入 mock moonshine_onnx + onnxruntime 模块，避免真实下载/推理。"""
+def fake_wav(tmp_path: Path) -> str:
+    p = tmp_path / "fake.wav"
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 16000)
+    return str(p)
+
+
+class _FakeTranscriber:
+    """模拟 moonshine_voice.Transcriber 的 batch 子集。"""
+
+    def __init__(self, model_path, model_arch, update_interval=0.5):  # noqa: ARG002
+        self.model_path = model_path
+        self.model_arch = model_arch
+        self.last_audio = None
+        self.last_sample_rate = None
+        # 默认返回两行带 word timing 的 Transcript
+        self._lines = [
+            SimpleNamespace(
+                text="你好世界",
+                start_time=0.0,
+                duration=1.0,
+                words=[
+                    SimpleNamespace(word="你好", start=0.0, end=0.5, confidence=0.95),
+                    SimpleNamespace(word="世界", start=0.5, end=1.0, confidence=0.92),
+                ],
+            ),
+            SimpleNamespace(
+                text="第二句",
+                start_time=1.2,
+                duration=0.8,
+                words=None,
+            ),
+        ]
+
+    def transcribe_without_streaming(self, audio_data, sample_rate=16000, flags=0):  # noqa: ARG002
+        self.last_audio = audio_data
+        self.last_sample_rate = sample_rate
+        return SimpleNamespace(lines=self._lines)
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def mock_moonshine_voice(monkeypatch):
     captured: dict = {}
 
-    fake_mod = ModuleType("moonshine_onnx")
+    fake_mod = ModuleType("moonshine_voice")
 
-    def fake_transcribe(audio_path, model_name, **kwargs):
-        captured["audio_path"] = audio_path
-        captured["model_name"] = model_name
-        captured["kwargs"] = kwargs
-        # Moonshine 返回 list[str]——多句串联
-        return ["你好世界", "second sentence"]
+    def fake_get_model(lang):
+        captured["language"] = lang
+        return (f"/fake/path/{lang}", f"arch-{lang}")
 
-    fake_mod.transcribe = fake_transcribe  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "moonshine_onnx", fake_mod)
+    fake_mod.get_model_for_language = fake_get_model  # type: ignore[attr-defined]
+    fake_mod.Transcriber = _FakeTranscriber  # type: ignore[attr-defined]
+    fake_mod.load_wav_file = lambda p: ([0.0] * 16000, 16000)  # type: ignore[attr-defined]
+    fake_mod.model_arch_to_string = lambda arch: f"str:{arch}"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_mod)
 
-    # mock onnxruntime.get_available_providers 让 device='cuda' 能通过
     fake_ort = ModuleType("onnxruntime")
     fake_ort.get_available_providers = lambda: [  # type: ignore[attr-defined]
         "CUDAExecutionProvider", "CPUExecutionProvider",
@@ -37,176 +87,164 @@ def mock_moonshine(monkeypatch):
     return captured
 
 
-@pytest.fixture
-def fake_wav(tmp_path: Path) -> str:
-    """构造一个最小可读的 WAV（1s 静音）；soundfile.info 能读出 samplerate / frames。"""
-    import wave
-    p = tmp_path / "fake.wav"
-    with wave.open(str(p), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(16000)
-        w.writeframes(b"\x00\x00" * 16000)  # 1s 静音
-    return str(p)
-
-
-def test_load_marks_loaded(mock_moonshine):  # noqa: ARG001
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base"})
-    assert not p.loaded
+def test_load_resolves_language(mock_moonshine_voice):
+    p = MoonshineProvider(name="m", config={"language": "zh"})
     p.load()
     assert p.loaded
-    assert p._model_name == "moonshine/base"
+    assert p._language == "zh"
+    assert mock_moonshine_voice["language"] == "zh"
 
 
 def test_load_without_library_raises(monkeypatch):
-    monkeypatch.setitem(sys.modules, "moonshine_onnx", None)
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base"})
+    monkeypatch.setitem(sys.modules, "moonshine_voice", None)
+    p = MoonshineProvider(name="m", config={"language": "en"})
     with pytest.raises(ModelLoadError) as exc:
         p.load()
-    assert "moonshine_onnx" in exc.value.message
+    assert "moonshine_voice" in exc.value.message
 
 
-def test_load_device_cuda_when_unavailable_raises(monkeypatch):
-    """device='cuda' 但 onnxruntime 没 CUDA EP → ModelLoadError。"""
-    monkeypatch.setitem(sys.modules, "moonshine_onnx", ModuleType("moonshine_onnx"))
-    fake_ort = ModuleType("onnxruntime")
-    fake_ort.get_available_providers = lambda: ["CPUExecutionProvider"]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base", "device": "cuda"})
+def test_load_unsupported_language_raises(monkeypatch):
+    fake_mod = ModuleType("moonshine_voice")
+
+    def bad(lang):
+        raise ValueError(f"unsupported language {lang}")
+    fake_mod.get_model_for_language = bad  # type: ignore[attr-defined]
+    fake_mod.Transcriber = _FakeTranscriber  # type: ignore[attr-defined]
+    fake_mod.model_arch_to_string = str  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_mod)
+
+    p = MoonshineProvider(name="m", config={"language": "klingon"})
     with pytest.raises(ModelLoadError) as exc:
         p.load()
-    assert "CUDA" in exc.value.message
+    assert "klingon" in exc.value.message
 
 
-def test_transcribe_returns_single_segment(mock_moonshine, fake_wav):
-    p = MoonshineProvider(
-        name="m",
-        config={"model_name": "moonshine/base-zh", "language": "zh"},
-    )
-    p.load()
-    r = p.transcribe(fake_wav, language="zh")
-
-    # 单段 [0, duration] 覆盖整段（Moonshine 不返回 segment 级时间戳）
-    assert len(r.segments) == 1
-    seg = r.segments[0]
-    assert seg.start == 0.0
-    assert seg.end > 0.0      # duration probed from WAV
-    assert "你好世界" in seg.text
-    assert "second sentence" in seg.text
-    assert r.language == "zh"
-    assert r.duration > 0.0
-
-    # 调用透传
-    assert mock_moonshine["audio_path"] == fake_wav
-    assert mock_moonshine["model_name"] == "moonshine/base-zh"
-
-
-def test_transcribe_max_tokens_per_second_passes_through(mock_moonshine, fake_wav):
-    p = MoonshineProvider(
-        name="m",
-        config={"model_name": "moonshine/base-zh", "max_tokens_per_second": "13.0"},
-    )
-    p.load()
-    p.transcribe(fake_wav)
-    assert mock_moonshine["kwargs"].get("max_tokens_per_second") == 13.0
-
-
-def test_transcribe_options_override_config(mock_moonshine, fake_wav):
-    """options['model_name'] 优先于 self.config['model_name']。"""
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base"})
-    p.load()
-    p.transcribe(fake_wav, options={"model_name": "moonshine/tiny"})
-    assert mock_moonshine["model_name"] == "moonshine/tiny"
-
-
-def test_transcribe_falls_back_when_kwarg_unsupported(monkeypatch, fake_wav):
-    """旧版 moonshine_onnx 不接受 max_tokens_per_second → 自动 fallback 不带它再试。"""
-    fake_mod = ModuleType("moonshine_onnx")
-    call_count = {"n": 0}
-
-    def fake_transcribe(audio_path, model_name, **kwargs):
-        call_count["n"] += 1
-        if kwargs:
-            # 模拟旧版本拒绝未知 kwarg
-            raise TypeError(f"unexpected keyword: {list(kwargs)}")
-        return ["fallback ok"]
-
-    fake_mod.transcribe = fake_transcribe  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "moonshine_onnx", fake_mod)
-    fake_ort = ModuleType("onnxruntime")
-    fake_ort.get_available_providers = lambda: ["CPUExecutionProvider"]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
-
-    p = MoonshineProvider(
-        name="m",
-        config={"model_name": "moonshine/base", "max_tokens_per_second": "13.0"},
-    )
+def test_transcribe_returns_segments_and_word_timings(mock_moonshine_voice, fake_wav):
+    p = MoonshineProvider(name="m", config={"language": "zh"})
     p.load()
     r = p.transcribe(fake_wav)
-    assert call_count["n"] == 2  # 第一次带 kwarg 失败，第二次裸调用
-    assert "fallback" in r.segments[0].text
+
+    assert len(r.segments) == 2
+    s0 = r.segments[0]
+    assert s0.text == "你好世界"
+    assert s0.start == 0.0
+    assert s0.end == 1.0
+    assert getattr(s0, "words", None) == [
+        {"start": 0.0, "end": 0.5, "word": "你好", "probability": 0.95},
+        {"start": 0.5, "end": 1.0, "word": "世界", "probability": 0.92},
+    ]
+
+    s1 = r.segments[1]
+    assert s1.text == "第二句"
+    assert s1.start == 1.2
+    assert s1.end == 2.0
+    assert not hasattr(s1, "words")  # 第二行没有 words
+
+    assert r.language == "zh"
+    assert r.duration > 0
 
 
-def test_transcribe_progress_cb_called_once(mock_moonshine, fake_wav):  # noqa: ARG001
-    calls: list[float] = []
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base"})
+def test_transcribe_passes_audio_and_sample_rate(mock_moonshine_voice, fake_wav):
+    p = MoonshineProvider(name="m", config={"language": "en"})
     p.load()
+    p.transcribe(fake_wav)
+    # _FakeTranscriber captures last audio + sr
+    transcriber = p._transcriber  # type: ignore[attr-defined]
+    assert transcriber.last_audio == [0.0] * 16000
+    assert transcriber.last_sample_rate == 16000
+
+
+def test_transcribe_progress_callback(mock_moonshine_voice, fake_wav):
+    p = MoonshineProvider(name="m", config={"language": "en"})
+    p.load()
+    calls: list[float] = []
     p.transcribe(fake_wav, progress_cb=lambda x: calls.append(x))
-    # Moonshine 无 segment 级进度，最终汇报 1.0
     assert calls == [1.0]
 
 
-def test_unload_resets_state(mock_moonshine, fake_wav):  # noqa: ARG001
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base"})
-    p.load()
-    assert p.loaded
-    p.unload()
-    assert not p.loaded
-    assert p._model_name is None
+def test_transcribe_non_wav_input_goes_through_ffmpeg(
+    monkeypatch, mock_moonshine_voice, tmp_path,  # noqa: ARG001
+):
+    src = tmp_path / "video.mp4"
+    src.write_bytes(b"not a wav header")
+    extract_calls: list[tuple[str, str]] = []
 
+    def fake_extract_audio(src_path, dst_path, **kwargs):  # noqa: ARG001
+        with wave.open(str(dst_path), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+            w.writeframes(b"\x00\x00" * 16000)
+        extract_calls.append((str(src_path), str(dst_path)))
+        return dst_path
 
-def test_info_reports_resolved_providers(mock_moonshine):  # noqa: ARG001
-    p = MoonshineProvider(
-        name="m",
-        config={"model_name": "moonshine/tiny", "device": "auto"},
+    monkeypatch.setattr(
+        "voxcraft.video.ffmpeg_io.extract_audio", fake_extract_audio,
     )
+
+    p = MoonshineProvider(name="m", config={"language": "en"})
     p.load()
-    info = p.info()
-    assert info.kind == "asr"
-    assert info.class_name == "MoonshineProvider"
-    assert info.extra["model_name"] == "moonshine/tiny"
-    # auto + CUDA 可用 → 优先 CUDA EP
-    assert info.extra["providers"][0] == "CUDAExecutionProvider"
+    r = p.transcribe(str(src))
+    assert len(extract_calls) == 1
+    assert extract_calls[0][0] == str(src)
+    assert r.segments[0].text  # 拿到了文本
 
 
-def test_transcribe_handles_str_return(monkeypatch, fake_wav):
-    """库返回 str 而非 list 的兼容路径。"""
-    fake_mod = ModuleType("moonshine_onnx")
-    fake_mod.transcribe = lambda audio_path, model_name, **kwargs: "纯字符串结果"  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "moonshine_onnx", fake_mod)
-    fake_ort = ModuleType("onnxruntime")
-    fake_ort.get_available_providers = lambda: ["CPUExecutionProvider"]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+def test_transcribe_empty_lines_yields_empty_segment(monkeypatch, fake_wav):
+    """transcribe 返回 lines=[] 时 → 单个空 segment（不 crash）。"""
+    class _EmptyTranscriber(_FakeTranscriber):
+        def transcribe_without_streaming(self, audio_data, sample_rate=16000, flags=0):  # noqa: ARG002
+            return SimpleNamespace(lines=[])
 
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base"})
+    fake_mod = ModuleType("moonshine_voice")
+    fake_mod.get_model_for_language = lambda l: (f"/p/{l}", f"a-{l}")  # type: ignore[attr-defined]
+    fake_mod.Transcriber = _EmptyTranscriber  # type: ignore[attr-defined]
+    fake_mod.load_wav_file = lambda p: ([0.0] * 1000, 16000)  # type: ignore[attr-defined]
+    fake_mod.model_arch_to_string = str  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_mod)
+    monkeypatch.setitem(sys.modules, "onnxruntime", ModuleType("onnxruntime"))
+
+    p = MoonshineProvider(name="m", config={"language": "en"})
     p.load()
     r = p.transcribe(fake_wav)
-    assert r.segments[0].text == "纯字符串结果"
+    assert len(r.segments) == 1
+    assert r.segments[0].text == ""
 
 
 def test_transcribe_propagates_failure(monkeypatch, fake_wav):
-    fake_mod = ModuleType("moonshine_onnx")
+    class _BoomTranscriber(_FakeTranscriber):
+        def transcribe_without_streaming(self, audio_data, sample_rate=16000, flags=0):  # noqa: ARG002
+            raise RuntimeError("inference blew up")
 
-    def boom(*a, **kw):
-        raise RuntimeError("onnx session blew up")
-    fake_mod.transcribe = boom  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "moonshine_onnx", fake_mod)
-    fake_ort = ModuleType("onnxruntime")
-    fake_ort.get_available_providers = lambda: ["CPUExecutionProvider"]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+    fake_mod = ModuleType("moonshine_voice")
+    fake_mod.get_model_for_language = lambda l: (f"/p/{l}", f"a-{l}")  # type: ignore[attr-defined]
+    fake_mod.Transcriber = _BoomTranscriber  # type: ignore[attr-defined]
+    fake_mod.load_wav_file = lambda p: ([0.0] * 1000, 16000)  # type: ignore[attr-defined]
+    fake_mod.model_arch_to_string = str  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_mod)
+    monkeypatch.setitem(sys.modules, "onnxruntime", ModuleType("onnxruntime"))
 
-    p = MoonshineProvider(name="m", config={"model_name": "moonshine/base"})
+    p = MoonshineProvider(name="m", config={"language": "en"})
     p.load()
     with pytest.raises(InferenceError) as exc:
         p.transcribe(fake_wav)
     assert "blew up" in exc.value.message
+
+
+def test_unload_resets_state(mock_moonshine_voice, fake_wav):  # noqa: ARG001
+    p = MoonshineProvider(name="m", config={"language": "en"})
+    p.load()
+    assert p.loaded
+    p.unload()
+    assert not p.loaded
+    assert p._transcriber is None
+    assert p._language is None
+
+
+def test_info_reports_language_and_ort_providers(mock_moonshine_voice):  # noqa: ARG001
+    p = MoonshineProvider(name="m", config={"language": "ja", "device": "auto"})
+    p.load()
+    info = p.info()
+    assert info.kind == "asr"
+    assert info.class_name == "MoonshineProvider"
+    assert info.extra["language"] == "ja"
+    assert "CUDAExecutionProvider" in info.extra["ort_providers"]
+    assert info.extra["model_arch"].startswith("str:")

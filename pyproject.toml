@@ -19,14 +19,13 @@ dependencies = [
     "python-multipart>=0.0.12",
     "python-dotenv>=1.0",
     "faster-whisper>=1.0",
-    # Moonshine：边缘端低延迟 ASR，ONNX 后端。useful-moonshine-onnx 上游会
-    # 拉入 onnxruntime（CPU EP）；GPU EP 由下面 onnxruntime-gpu 提供，运行时
-    # 优先级在 MoonshineProvider._resolve_providers 里手动指定
-    "useful-moonshine-onnx>=20251101",
-    # onnxruntime-gpu 提供 CUDAExecutionProvider；与 onnxruntime（CPU）安装路径
-    # 不冲突，pip 视为两个独立包，但 import onnxruntime 时只有一个生效——
-    # onnxruntime-gpu 自带 CPU EP，所以装它单个即可
-    "onnxruntime-gpu>=1.17",
+    # Moonshine v2：多语种 ASR（中/英/日/韩/越/乌/西/阿）；moonshine-voice 是
+    # v2 的官方 PyPI 包（v1 的 useful-moonshine-onnx 只支持英文，已废弃）。
+    # 包自带 onnxruntime（CPU）依赖；下面 onnxruntime-gpu 只在 Linux 上加，提供
+    # CUDAExecutionProvider——macOS dev 机没有相应 wheel，skip 即可，本地仍能 import
+    # moonshine_voice 走 CPU。
+    "moonshine-voice",
+    "onnxruntime-gpu>=1.17; sys_platform == 'linux'",
     "piper-tts>=1.4.2",
     # modelscope：项目用 snapshot_download 拉模型镜像（CN 用户首选源）
     "modelscope>=1.27,<2",

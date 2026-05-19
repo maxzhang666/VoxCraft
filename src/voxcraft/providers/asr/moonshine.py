@@ -1,44 +1,52 @@
-"""Moonshine（moonshine-ai/moonshine）ONNX 后端的 AsrProvider 实现。
+"""Moonshine v2（moonshine-ai/moonshine-v2）ASR Provider，走 batch API。
 
-Moonshine 是一组为"短音频 + 低延迟"优化的 ASR 模型：参数比同档 Whisper 小 6×、
-ONNX 后端 CPU 即可 <300ms 出结果、输入长度可变（无 30s 窗口浪费）。
+为什么是 v2（moonshine-voice）：
+- v1（useful-moonshine-onnx）只英文，已废弃。我第一次集成踩坑：英文模型遇中文
+  音频会 COVID-19 loop 幻觉
+- v2 支持 8 个语种：英 / 中 / 日 / 韩 / 西 / 越 / 乌 / 阿（语种码二字母：
+  en/zh/ja/ko/es/vi/uk/ar）
 
-集成边界 & 已知限制（实事求是）：
+API（本地探出来的真实形态，不是搜索 / 文档 / 我猜的）：
+    from moonshine_voice import (
+        Transcriber, get_model_for_language, load_wav_file,
+    )
+    model_path, model_arch = get_model_for_language("zh")
+    transcriber = Transcriber(
+        model_path=model_path, model_arch=model_arch,
+        update_interval=0.5, options=None,
+    )
+    audio_data, sample_rate = load_wav_file(wav_path)  # list[float], 16000
+    transcript = transcriber.transcribe_without_streaming(
+        audio_data, sample_rate=sample_rate,
+    )
+    # transcript.lines: List[TranscriptLine]
+    # 每个 line: text / start_time / duration / words (List[WordTiming])
+    # WordTiming: word / start / end / confidence
 
-1) **无 segment 级时间戳**。useful-moonshine-onnx.transcribe() 返回平铺文本，
-   没有 segment.start/end。本 Provider 把整段输出包成单 segment [0, duration]
-   满足 AsrResult 契约；够 /api/asr 纯文本场景。video_translate 字幕对齐需要
-   细粒度时间戳，那条路径仍应优先选 Whisper——上游设计如此，非本 Provider 限制。
+亮点：
+- **有 segment 级时间戳**（TranscriptLine.start_time / duration）
+- **有 word 级时间戳**（WordTiming.start/end/confidence）—— 比 Whisper-tiny 还细
+- batch API 一行返回 Transcript，不用搞流式 listener
 
-2) **模型在 VoxCraft 模型库可见但缓存路径要对齐**。catalog 里有一条 `moonshine`
-   entry 指向 `UsefulSensors/moonshine`（同一个 repo 内含 tiny + base 两个 size
-   的 ONNX 子目录），下载后两个 size 都到位。但 useful-moonshine-onnx 库运行时
-   走的是 `huggingface_hub` 默认 cache 路径（HF_HOME / HF_HUB_CACHE），与 VoxCraft
-   `snapshot_download(local_dir=...)` 落盘位置不一致——想让两者共享存储、避免
-   首次 transcribe 再下一遍，**容器环境里把 HF_HOME 指向同一个持久卷**（如
-   `HF_HOME=/app/data/hf-home`）。不配也能用，只是首次推理多一次 ~300MB 下载。
+模型下载：moonshine-voice 库自管，按 language 调 `get_model_for_language`
+从 HF 拉模型到 HF_HOME（容器内建议 `HF_HOME=/data/hf-home` 持久化）。语种切换
+= 拉新模型；不进 VoxCraft 模型库 catalog。
 
-3) **ExecutionProvider 选择是只读的**。useful-moonshine-onnx.transcribe() 的
-   高层 API **不接受 providers 参数**——内部走默认 InferenceSession，pip 装了
-   onnxruntime-gpu 就自动 CUDA EP，没装就 CPU EP。本 Provider 的 `device`
-   config 只做 **assertion**（device='cuda' 但 CUDA EP 不可用 → load 时 raise，
-   避免运行到一半才崩），不能像 WhisperProvider 那样真正切换设备。这意味着：
-   - 想强制 CPU 跑 → 镜像里别装 onnxruntime-gpu（当前 pyproject 装了，所以不可控）
-   - 想强制 CUDA 跑 → 装 onnxruntime-gpu 即可，库自动用
-   - device='auto' 是当前行为的描述，不是控制开关
-   future：如果上游暴露 `providers=` kwarg 或我们直接调下层 InferenceSession，
-   再补回完整控制。
+CN 用户：设 `HF_ENDPOINT=https://hf-mirror.com` 走国内镜像。
 
 Config 字段：
-- model_name: enum   "moonshine/tiny" / "moonshine/base" + 语种特化（zh/ja/ko），
-                      也可手动改 DB 写其他 model_name 字符串。首次推理触发自动下载
-- language:  str     ISO 语种码（en/zh/...），只做结果元数据；具体语种由 model_name 决定
-- device:    enum    "auto"/"cpu"/"cuda"——见上 3) 的限制
-- max_tokens_per_second: float   CJK 建议 13.0；英文场景库默认 6.5；留空跟库默认
+- language: enum  ar / es / en / ja / ko / vi / uk / zh（库 supported_languages()
+                   返回的官方列表）
+- device:   info-only enum（auto/cpu/cuda）；onnxruntime 自动按已装 EP 选
+- update_interval: float  Transcriber 创建时的事件间隔；batch 路径其实用不到，
+                          留着方便未来切流式
 """
 from __future__ import annotations
 
-from typing import Any
+import tempfile
+from pathlib import Path
+
+import structlog
 
 from voxcraft.errors import InferenceError, ModelLoadError
 from voxcraft.providers.base import (
@@ -50,210 +58,252 @@ from voxcraft.providers.base import (
 )
 
 
-def _as_float(v: Any, default: float) -> float:
-    if v is None or v == "":
-        return default
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return default
+log = structlog.get_logger()
+
+
+# moonshine_voice.supported_languages() 当前返回的官方列表
+_LANG_OPTIONS = ("ar", "es", "en", "ja", "ko", "vi", "uk", "zh")
 
 
 def _audio_duration_seconds(path: str) -> float:
-    """读音频元数据拿时长；失败返回 0.0（不致命）。"""
+    """读音频时长。先 soundfile（WAV/FLAC 快），失败 fallback ffprobe。"""
     try:
-        import soundfile as sf
+        import soundfile as sf  # noqa: PLC0415
         info = sf.info(path)
         if info.samplerate:
             return float(info.frames) / float(info.samplerate)
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from voxcraft.video.ffmpeg_io import probe  # noqa: PLC0415
+        info = probe(path)
+        if info.duration:
+            return float(info.duration)
+    except Exception:  # noqa: BLE001
+        pass
     return 0.0
 
 
+def _ensure_wav(audio_path: str) -> tuple[str, bool]:
+    """保证输入是 WAV。非 WAV → ffmpeg 抽到 16kHz mono 临时 WAV。
+
+    返回 (path, owns_temp)；owns_temp=True 时调用方负责清理。
+    """
+    p = Path(audio_path)
+    try:
+        with open(p, "rb") as f:
+            head = f.read(12)
+        if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+            return audio_path, False
+    except OSError:
+        pass
+
+    from voxcraft.video.ffmpeg_io import extract_audio  # noqa: PLC0415
+    tmp = Path(tempfile.mkstemp(suffix=".wav", prefix="moonshine_")[1])
+    try:
+        extract_audio(p, tmp)
+    except Exception as e:  # noqa: BLE001
+        tmp.unlink(missing_ok=True)
+        raise InferenceError(
+            f"Failed to convert input to WAV via ffmpeg: {e}",
+            details={"source": str(p)},
+        ) from e
+    return str(tmp), True
+
+
 class MoonshineProvider(AsrProvider):
-    LABEL = "Moonshine（边缘端低延迟 ASR / ONNX）"
+    LABEL = "Moonshine v2（多语种边缘 ASR）"
     CONFIG_SCHEMA = [
         ConfigField(
-            "model_name", "模型", "enum",
-            options=(
-                "moonshine/tiny",
-                "moonshine/base",
-                # 语种特化（v2）；用户也可自行填别的字符串
-                "moonshine/tiny-zh",
-                "moonshine/base-zh",
-                "moonshine/tiny-ja",
-                "moonshine/base-ja",
-                "moonshine/tiny-ko",
-                "moonshine/base-ko",
-            ),
-            default="moonshine/base",
+            "language", "语种", "enum",
+            options=_LANG_OPTIONS,
+            default="en",
             required=True,
-            help="moonshine/tiny ≈ 27M、moonshine/base ≈ 61M；语种特化版精度更高。"
-            "第一次使用会从 HF 拉模型到 HF_HOME 缓存",
+            help="决定加载哪个语种特化模型。zh = 中文，ja = 日文，ko = 韩文 ……"
+            "首次切换语种会触发该语种模型从 HF 下载到 HF_HOME",
         ),
         ConfigField(
-            "language", "目标语种（结果标记用）", "str", default="en",
-            help="ISO 语种码（en/zh/ja/ko/...）。Moonshine 模型多数已绑定语种或"
-            "多语种统一处理，本字段仅用于在结果里标记语言归属",
-        ),
-        ConfigField(
-            "device", "设备", "enum",
+            "device", "设备（信息性）", "enum",
             options=("auto", "cpu", "cuda"), default="auto",
-            help="auto 优先选 CUDAExecutionProvider，缺则 CPU。Moonshine 模型小，"
-            "CPU 已经能 100ms 量级，多数场景无需 GPU",
+            help="onnxruntime 自动按已装 EP 选；本字段仅在 info() 展示，不做强制",
         ),
         ConfigField(
-            "max_tokens_per_second", "Max tokens / s", "str", default="",
-            help="非拉丁字母语种（中文 / 日文 / 韩文）建议填 13.0；留空走库内置"
-            "默认（英文场景 6.5）。这是 Moonshine 解码停机准则，调大避免长音频截断",
+            "update_interval", "事件间隔（秒）", "str", default="0.5",
+            help="流式 Transcriber 内部事件间隔；当前实现走 batch API，不影响结果",
         ),
     ]
 
     def __init__(self, name: str, config: dict) -> None:
         super().__init__(name, config)
-        # Moonshine 库内部按 model name 缓存模型实例，本 Provider 不持有重对象——
-        # load() 仅做"探活 + 预热"。卸载也只是清标记。
-        self._model_name: str | None = None
-
-    def _resolve_providers(self) -> list[str]:
-        """根据 device config 决定 onnxruntime 的 ExecutionProvider 顺序。
-
-        Moonshine 内部如果接受 providers 参数则透传；不接受则只能靠环境（默认顺序）。
-        多数实测：装了 onnxruntime-gpu 就自动选 CUDA，否则 CPU。这里返回供日志输出。
-        """
-        device = (self.config.get("device") or "auto").lower()
-        try:
-            import onnxruntime as ort  # noqa: PLC0415
-            available = set(ort.get_available_providers())
-        except ImportError:
-            return ["CPUExecutionProvider"]
-
-        if device == "cpu":
-            return ["CPUExecutionProvider"]
-        if device == "cuda":
-            if "CUDAExecutionProvider" not in available:
-                raise ModelLoadError(
-                    "device='cuda' 但 onnxruntime CUDA EP 不可用——请确认装了 "
-                    "onnxruntime-gpu 而非 onnxruntime，且 CUDA/cuDNN 与驱动匹配",
-                    details={"provider": self.name, "available": sorted(available)},
-                )
-            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        # auto：能用 CUDA 就 CUDA，不强求
-        if "CUDAExecutionProvider" in available:
-            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        return ["CPUExecutionProvider"]
+        self._transcriber = None
+        self._language: str | None = None
+        self._model_arch_str: str | None = None
 
     def load(self) -> None:
-        if self._loaded:
+        if self._loaded and self._transcriber is not None:
             return
-        model_name = self.config.get("model_name") or "moonshine/base"
         try:
-            # useful-moonshine-onnx 暴露的顶层 API：moonshine_onnx.transcribe(path, name)
-            import moonshine_onnx  # noqa: F401, PLC0415
+            from moonshine_voice import (  # noqa: PLC0415
+                Transcriber,
+                get_model_for_language,
+                model_arch_to_string,
+            )
         except ImportError as e:
             raise ModelLoadError(
-                "moonshine_onnx 未安装。请检查 pyproject.toml 是否包含 "
-                "useful-moonshine-onnx 依赖",
+                "moonshine_voice 未安装。请检查 pyproject.toml 是否包含 "
+                "moonshine-voice 依赖。",
                 details={"provider": self.name, "import_error": str(e)},
             ) from e
 
-        # 探活：构造 providers 列表确保运行环境 OK；模型首次 transcribe 时才会真
-        # 下载，避免 load() 阻塞 LRU 太久（HF snapshot 可能慢）
-        providers = self._resolve_providers()
-        self._model_name = model_name
+        lang = (self.config.get("language") or "en").strip()
+        try:
+            update_interval = float(self.config.get("update_interval") or 0.5)
+        except (TypeError, ValueError):
+            update_interval = 0.5
+
+        try:
+            model_path, model_arch = get_model_for_language(lang)
+        except Exception as e:  # noqa: BLE001
+            raise ModelLoadError(
+                f"Failed to fetch Moonshine v2 model for language={lang!r}: {e}. "
+                f"支持的 language：{list(_LANG_OPTIONS)}。"
+                "网络问题的话设 HF_ENDPOINT=https://hf-mirror.com",
+                details={"provider": self.name, "language": lang},
+            ) from e
+
+        try:
+            self._transcriber = Transcriber(
+                model_path=model_path,
+                model_arch=model_arch,
+                update_interval=update_interval,
+            )
+        except Exception as e:  # noqa: BLE001
+            raise ModelLoadError(
+                f"Failed to instantiate Moonshine Transcriber: {e}",
+                details={"provider": self.name, "model_path": str(model_path)},
+            ) from e
+
+        self._language = lang
+        try:
+            self._model_arch_str = model_arch_to_string(model_arch)
+        except Exception:  # noqa: BLE001
+            self._model_arch_str = str(model_arch)
         self._loaded = True
-        # 把决定的 providers 透传给 info()
-        self.config.setdefault("_resolved_providers", providers)
+        log.info(
+            "moonshine.load.done",
+            provider=self.name, language=lang,
+            model_path=str(model_path), model_arch=self._model_arch_str,
+        )
 
     def unload(self) -> None:
-        # Moonshine 库自己管模型缓存；Provider 端清标记即可。下一次 load 走快路径
-        self._model_name = None
+        if self._transcriber is not None:
+            close = getattr(self._transcriber, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    pass
+        self._transcriber = None
+        self._language = None
+        self._model_arch_str = None
         self._loaded = False
 
     def info(self) -> ProviderInfo:
+        try:
+            import onnxruntime as ort  # noqa: PLC0415
+            providers = ort.get_available_providers()
+        except ImportError:
+            providers = []
         return ProviderInfo(
             kind="asr",
             name=self.name,
             class_name=type(self).__name__,
             loaded=self._loaded,
             extra={
-                "model_name": self.config.get("model_name", "moonshine/base"),
+                "language": self._language or self.config.get("language", "en"),
+                "model_arch": self._model_arch_str,
                 "device": self.config.get("device", "auto"),
-                "providers": self.config.get("_resolved_providers"),
+                "ort_providers": providers,
             },
         )
 
     def transcribe(
         self,
         audio_path: str,
-        language: str | None = None,
+        language: str | None = None,  # noqa: ARG002 — v2 按 load 时绑定的 language
         progress_cb=None,
-        options: dict | None = None,
+        options: dict | None = None,  # noqa: ARG002 — v2 batch 没有请求级调参
     ) -> AsrResult:
-        if not self._loaded or self._model_name is None:
+        if not self._loaded or self._transcriber is None:
             raise InferenceError(
                 "MoonshineProvider not loaded; call load() first",
                 details={"provider": self.name},
             )
 
-        # options 允许请求级覆盖 model_name / max_tokens_per_second（用法和
-        # WhisperProvider._build_transcribe_kwargs 同理；这里 Moonshine 可调点少，
-        # 不抽取单独 helper）
-        opts = options or {}
-        model_name = opts.get("model_name") or self._model_name
-        max_tps = _as_float(
-            opts.get("max_tokens_per_second")
-            if opts.get("max_tokens_per_second") not in (None, "")
-            else self.config.get("max_tokens_per_second"),
-            0.0,
-        )
+        # 1. 保证 WAV（非 WAV 走 ffmpeg 抽 16kHz mono）
+        wav_path, owns_tmp = _ensure_wav(audio_path)
 
         try:
-            import moonshine_onnx  # noqa: PLC0415
+            from moonshine_voice import load_wav_file  # noqa: PLC0415
         except ImportError as e:
+            if owns_tmp:
+                Path(wav_path).unlink(missing_ok=True)
             raise InferenceError(
-                "moonshine_onnx import failed at transcribe time",
+                "moonshine_voice import failed at transcribe time",
                 details={"provider": self.name, "error": str(e)},
             ) from e
 
-        # Moonshine 推理：传 audio_path + model_name；max_tokens_per_second 是关键
-        # 字段（中文/日文需调大），库 1+ 版本接受 kwarg 透传
+        # 2. 读音频成 PCM float list
         try:
-            extra_kwargs: dict[str, Any] = {}
-            if max_tps > 0:
-                extra_kwargs["max_tokens_per_second"] = max_tps
-            result = moonshine_onnx.transcribe(
-                audio_path, model_name, **extra_kwargs,
-            )
-        except TypeError:
-            # 版本兼容：旧版不接受 max_tokens_per_second kwarg；丢弃重试
-            try:
-                result = moonshine_onnx.transcribe(audio_path, model_name)
-            except Exception as e:  # noqa: BLE001
-                raise InferenceError(
-                    f"Moonshine transcription failed: {e}",
-                    details={"provider": self.name, "audio": audio_path},
-                ) from e
+            audio_data, sample_rate = load_wav_file(wav_path)
         except Exception as e:  # noqa: BLE001
+            if owns_tmp:
+                Path(wav_path).unlink(missing_ok=True)
+            raise InferenceError(
+                f"Failed to load WAV via moonshine_voice.load_wav_file: {e}",
+                details={"provider": self.name, "audio": audio_path},
+            ) from e
+
+        # 3. batch 转录
+        try:
+            transcript = self._transcriber.transcribe_without_streaming(
+                audio_data, sample_rate=sample_rate,
+            )
+        except Exception as e:  # noqa: BLE001
+            if owns_tmp:
+                Path(wav_path).unlink(missing_ok=True)
             raise InferenceError(
                 f"Moonshine transcription failed: {e}",
                 details={"provider": self.name, "audio": audio_path},
             ) from e
 
-        # result 是 list[str]（多句串联）或 str（单句）；统一成单段长文本
-        if isinstance(result, str):
-            text = result
-        elif isinstance(result, (list, tuple)):
-            text = " ".join(str(x).strip() for x in result if x).strip()
-        else:
-            text = str(result).strip()
+        # 4. 转换成 AsrResult。Moonshine v2 给的颗粒度：
+        #    - line.text / start_time / duration   →  AsrSegment
+        #    - line.words[] (WordTiming: word/start/end/confidence)  →  segment.words
+        segments: list[AsrSegment] = []
+        lines = getattr(transcript, "lines", None) or []
+        for line in lines:
+            text = (getattr(line, "text", "") or "").strip()
+            if not text:
+                continue
+            start = float(getattr(line, "start_time", 0.0) or 0.0)
+            dur = float(getattr(line, "duration", 0.0) or 0.0)
+            seg = AsrSegment(start=start, end=start + dur, text=text)
+            words = getattr(line, "words", None) or []
+            if words:
+                seg.words = [  # type: ignore[attr-defined]
+                    {
+                        "start": float(w.start),
+                        "end": float(w.end),
+                        "word": w.word,
+                        "probability": float(w.confidence),
+                    }
+                    for w in words
+                ]
+            segments.append(seg)
 
-        duration = _audio_duration_seconds(audio_path)
-        # Moonshine 不返回 segment 级时间戳：把整段输出装成单 segment [0, duration]
-        # 满足 AsrResult 契约。这是上游能力限制，video_translate 字幕对齐若需细
-        # 粒度时间戳应改用 WhisperProvider。
-        segment = AsrSegment(start=0.0, end=duration, text=text)
+        if owns_tmp:
+            Path(wav_path).unlink(missing_ok=True)
 
         if progress_cb is not None:
             try:
@@ -261,8 +311,17 @@ class MoonshineProvider(AsrProvider):
             except Exception:  # noqa: BLE001
                 pass
 
+        duration = _audio_duration_seconds(audio_path)
+        # 如果 lines 全空，构造一个空 segment 满足 AsrResult 契约（避免下游 crash）
+        if not segments:
+            log.warning(
+                "moonshine.transcribe.empty",
+                provider=self.name, audio=audio_path,
+            )
+            segments = [AsrSegment(start=0.0, end=duration, text="")]
+
         return AsrResult(
-            segments=[segment],
-            language=(language or self.config.get("language") or "en"),
+            segments=segments,
+            language=self._language or "en",
             duration=duration,
         )
