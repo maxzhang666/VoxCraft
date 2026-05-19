@@ -10,14 +10,13 @@ ONNX 后端 CPU 即可 <300ms 出结果、输入长度可变（无 30s 窗口浪
    满足 AsrResult 契约；够 /api/asr 纯文本场景。video_translate 字幕对齐需要
    细粒度时间戳，那条路径仍应优先选 Whisper——上游设计如此，非本 Provider 限制。
 
-2) **模型不进 VoxCraft 模型管理**。useful-moonshine-onnx 库自管下载：按
-   model_name 字符串走 huggingface_hub 默认 cache（~/.cache/huggingface/hub）。
-   VoxCraft 自己的 download_hf 用 `snapshot_download(local_dir=...)` 绕过默认
-   cache，**两条路径不共享存储**——硬挂 catalog 条目会让用户以为"已下载"，但
-   第一次 transcribe 时 Moonshine 仍要从默认 cache 再下一遍。所以保持现状：
-   首次 transcribe 触发自动下载，重启容器只要 HF_HOME 持久就不会重下。
-   想抢占式预热的话，进容器 `python -c "import moonshine_onnx as m; m.transcribe(...)"`
-   手动跑一遍小音频即可。
+2) **模型在 VoxCraft 模型库可见但缓存路径要对齐**。catalog 里有一条 `moonshine`
+   entry 指向 `UsefulSensors/moonshine`（同一个 repo 内含 tiny + base 两个 size
+   的 ONNX 子目录），下载后两个 size 都到位。但 useful-moonshine-onnx 库运行时
+   走的是 `huggingface_hub` 默认 cache 路径（HF_HOME / HF_HUB_CACHE），与 VoxCraft
+   `snapshot_download(local_dir=...)` 落盘位置不一致——想让两者共享存储、避免
+   首次 transcribe 再下一遍，**容器环境里把 HF_HOME 指向同一个持久卷**（如
+   `HF_HOME=/app/data/hf-home`）。不配也能用，只是首次推理多一次 ~300MB 下载。
 
 3) **ExecutionProvider 选择是只读的**。useful-moonshine-onnx.transcribe() 的
    高层 API **不接受 providers 参数**——内部走默认 InferenceSession，pip 装了

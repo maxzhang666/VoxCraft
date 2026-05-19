@@ -83,13 +83,30 @@ CATALOG: list[CatalogEntry] = [
         provider_class="WhisperProvider",
         mirror_authority="community",
     ),
-    # Moonshine 不进 catalog：useful-moonshine-onnx 库自管模型下载（按 model_name
-    # 字符串走 huggingface_hub 默认 cache，~/.cache/huggingface/hub）。VoxCraft 的
-    # download_hf 是 `snapshot_download(repo_id, local_dir=<models_dir>/<key>)` 模式，
-    # 绕过默认 cache，两条路径不共享存储。强行挂 catalog 条目反而误导用户
-    # ——"下载"按钮看似成功，第一次 transcribe 时 Moonshine 仍然要从另一处再下
-    # 一遍。所以把 model 生命周期完全交给 Moonshine 库，用户只需在 Provider
-    # 配置里填 model_name（如 "moonshine/base"）即可，首次推理会触发自动下载。
+    # Moonshine：useful-moonshine-onnx 库从单个 repo `UsefulSensors/moonshine`
+    # 加载，内部按 model_name（"moonshine/tiny" / "moonshine/base"）映射到该 repo
+    # 下的 `onnx/<size>/` 子目录。所以 catalog 只放一条 entry：用户下载一次同时
+    # 拿到 tiny + base 两个 size，Provider config 里改 model_name 即可切。
+    #
+    # 注意：本条 entry 的下载落 VoxCraft 的 `<models_dir>/moonshine/`，**默认不**
+    # 同步进 ~/.cache/huggingface/hub（local_dir 模式绕过 HF 缓存）。想让 Moonshine
+    # 库运行时复用这份下载、避免第一次推理再下一遍，**容器启动时设
+    # HF_HOME=<models_dir>**（或 docker-compose env 里挂同一卷），库会改从该路径
+    # 读 HF cache。否则首次 transcribe 会触发一次额外下载到 ~/.cache，本条 entry
+    # 仍然有"模型库可见 + 手动备份"价值。
+    CatalogEntry(
+        key="moonshine",
+        label="Moonshine（含 tiny + base 两个 size）",
+        kind="asr",
+        sources={
+            "hf": "UsefulSensors/moonshine",
+        },
+        # tiny ONNX ~110MB + base ONNX ~240MB + safetensors ~350MB + tokenizer 等
+        size_mb=700,
+        recommend_tier="entry",
+        provider_class="MoonshineProvider",
+        mirror_authority="official",
+    ),
 
     # ---------- TTS (Piper) ----------
     CatalogEntry(
